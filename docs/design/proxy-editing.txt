@@ -1,0 +1,134 @@
+Proxy editing
+~~~~~~~~~~~~~
+
+Summary
+~~~~~~~~~
+
+1. Basic ideas
+2. Problems
+3. Propositions to solve those problems
+4. Use-cases
+5. API draft
+
+1. Basic ideas
+~~~~~~~~~~~~~~~
+
+Proxy editing is the ability to swap clips by a "proxy" (low-quality) version
+that is more suited for editing, and then using the original, full-quality clip
+to do the render. 
+
+It's definitely a very nice feature when you have HD footage and your computer
+is not beefy enough to handle realtime playback.
+
+    * We must have manual/semi-automated and fully-automated modes
+    * We must be able choose what clips must use proxy editing mode
+
+2. Problems (Not in any particular order)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+    1) We must be able move proxies for a given asset or for all assets 
+    2) We need a way to detect incomplete or invalid proxies
+    3) Proxies generation/processing needs to be pause-able
+    4) Proxies generation needs to be cancel-able
+    5) Processing should probably happen in a separate/sandboxed process
+    6) Determine the appropriate resolution depending on the source material
+    8) For each asset, report the proxies encoding progress and other signals
+    9) No negative impacts on perfomance when generating the clip "proxies" 
+
+3. Propositions to solve those problems
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+    1) We could implement a proxy editing API in GESAssets which actually have
+       internal "proxy" API which uses in the case where a file has moved. This
+       thing must be also supportable by "proxies" clips.
+
+    2) We can store which mode (manual/automatic) proxy editing use in project
+       by adding new features to GESProject.
+
+4. Use cases
+~~~~~~~~~~~~~
+
+    UC-1. The user wants to create "proxies" clips.
+    UC-2. The developer wants to allow users to configure manual/automatic mode.
+    UC-3. The user wants to choose clips which will use proxies.
+
+5. API
+~~~~~~
+
+A. GESProject new API
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+/**
+ * ges_project_set_proxy_profile:
+ * @project: (transfer none): The #GESProject to set.
+ * @profile: The #GstEncodingProfile for proxy editing in @project.
+ * @asset: The #GESUriClipAsset to set.
+ * Method to set proxy editing profile for assets in project. If we set an encoding @profile on a @project and don't set on a @asset, then it means it's automatic proxy editing mode. If we set and encoding @profile on a @project and set on a @asset, then it means it's manual proxy editing mode.
+ * Returns: %TRUE if the @profile was setted, else %FALSE.
+ */
+gboolean
+ges_project_set_proxy_profile (GESProject * project, GstEncodingProfile * profile, GESUriClipAsset * asset);
+
+/**
+ * ges_project_get_proxy_profile:
+ * @project: (transfer none): The #GESProject to get.
+ * @asset: The #GESUriClipAsset to get.
+ * Method to get proxy editing profile from @asset, used in @project. If we don't set an @asset, then it means it's get proxy editing profile from @project. 
+ * Returns: The #GstEncodingProfile used for proxy edition in @project or in @asset.
+ */
+GstEncodingProfile *
+ges_project_get_proxy_profile (GESProject * project, GESUriClipAsset * asset);
+
+/**
+ * ges_project_start_proxy_creation:
+ * @project: (transfer none): The #GESProject to get.
+ * @asset: The #GESUriClipAsset.
+ * @cancellable: optional #GCancellable object, NULL to ignore. 
+ * Method to start create proxies for proxy editing. If asset is NULL, it means start creation of all proxies.
+ * Returns: %TRUE if the creation was started, else %FALSE.
+ */
+gboolean
+ges_project_start_proxy_creation (GESProject * project, GESUriClipAsset * asset, GCancellable * cancellable);
+
+/**
+ * ges_project_start_proxy_creation_async:
+ * @project: (transfer none): The #GESProject.
+ * @asset: The #GESUriClipAsset.
+ * @cancellable: optional #GCancellable object, NULL to ignore.
+ * @callback: a #GAsyncReadyCallback to call when the initialization is finished.
+ * @user_data: The user data to pass when callback is called.
+ * Method to start create proxies for proxy editing asyncronously, callback will be called when the assets is ready to be used or if an error occured. If asset is NULL, it means start creation of all proxies.
+ */
+void
+ges_project_start_proxy_creation_async (GESProject * project, GESUriClipAsset * asset, GCancellable * cancellable, GAsyncReadyCallback callback, gpointer user_data);
+
+/**
+ * ges_project_pause_proxy_creation:
+ * @project: (transfer none): The #GESProject to get.
+ * @asset: The #GESUriClipAsset.
+ * Method to pause create proxies for proxy editing. If asset is NULL, it means pause creation of all proxies.
+ * Returns: %TRUE if the creation was paused, else %FALSE.
+ */
+gboolean
+ges_project_pause_proxy_creation (GESProject * project, GESUriClipAsset * asset);
+
+/**
+ * ges_project_pause_proxy_creation_async:
+ * @project: (transfer none): The #GESProject.
+ * @asset: The #GESUriClipAsset.
+ * @callback: a #GAsyncReadyCallback to call when the initialization is finished.
+ * @user_data: The user data to pass when callback is called.
+ * Method to pause create proxies for proxy editing asyncronously, callback will be called when the assets is ready to be used or if an error occured. If asset is NULL, it means pause creation of all proxies.
+ */
+void
+ges_project_pause_proxy_creation_async (GESProject * project, GESUriClipAsset * asset, GAsyncReadyCallback callback, gpointer user_data);
+
+/**
+ * ges_project_get_proxy_state:
+ * @project: (transfer none): The #GESProject to get.
+ * Method to get #GstState for proxy editing.
+ * Returns: The #GstState used for proxy edition in project.
+ */
+GstState
+ges_project_get_proxy_state (GESProject * project);
+
