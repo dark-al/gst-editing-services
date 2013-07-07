@@ -613,6 +613,76 @@ GST_START_TEST (test_project_auto_transition)
 
 GST_END_TEST;
 
+static GstEncodingProfile *
+_create_ogg_theora_profile (void)
+{
+  GstEncodingContainerProfile *prof;
+  GstCaps *caps;
+
+  caps = gst_caps_from_string ("application/ogg");
+  prof = gst_encoding_container_profile_new ("Ogg audio/video",
+      "Standard OGG/THEORA/VORBIS", caps, NULL);
+  gst_caps_unref (caps);
+
+  caps = gst_caps_from_string ("video/x-theora");
+  gst_encoding_container_profile_add_profile (prof,
+      (GstEncodingProfile *) gst_encoding_video_profile_new (caps, NULL, NULL,
+          0));
+  gst_caps_unref (caps);
+
+  caps = gst_caps_from_string ("audio/x-vorbis");
+  gst_encoding_container_profile_add_profile (prof,
+      (GstEncodingProfile *) gst_encoding_audio_profile_new (caps, NULL, NULL,
+          0));
+  gst_caps_unref (caps);
+
+  return (GstEncodingProfile *) prof;
+}
+
+GST_START_TEST (test_project_proxy_editing)
+{
+  GMainLoop *mainloop;
+  GstEncodingProfile *profile, *tmpprofile;
+  GESProject *project;
+  GESTimeline *timeline;
+  //gchar *uri = ges_test_file_uri ("test-project.xges");
+  gchar *uri = gst_filename_to_uri ("/home/dark-al/test.xges", NULL);
+
+  project = ges_project_new (uri);
+  mainloop = g_main_loop_new (NULL, FALSE);
+  fail_unless (GES_IS_PROJECT (project));
+
+  /* Connect the signals */
+  g_signal_connect (project, "loaded", (GCallback) project_loaded_cb, mainloop);
+
+  /* Make sure we update the project's dummy URL to some actual URL */
+  g_signal_connect (project, "missing-uri", (GCallback) _set_new_uri, NULL);
+
+  /* Now extract a timeline from it */
+  GST_LOG ("Loading project");
+  timeline = GES_TIMELINE (ges_asset_extract (GES_ASSET (project), NULL));
+  fail_unless (GES_IS_TIMELINE (timeline));
+
+  g_main_loop_run (mainloop);
+
+  profile = _create_ogg_theora_profile ();
+  ges_project_set_proxy_profile (project, profile, NULL);
+  tmpprofile = ges_project_get_proxy_profile (project, NULL);
+  fail_unless (gst_encoding_profile_is_equal (profile, tmpprofile));
+
+  ges_project_start_proxy_creation (project, NULL, NULL);
+
+  gst_object_unref (timeline);
+  gst_object_unref (project);
+  g_free (uri);
+
+  g_main_loop_unref (mainloop);
+  g_signal_handlers_disconnect_by_func (project, (GCallback) project_loaded_cb,
+      mainloop);
+}
+
+GST_END_TEST;
+
 /*  FIXME This test does not pass for some bad reason */
 #if 0
 static void
@@ -713,6 +783,7 @@ ges_suite (void)
   tcase_add_test (tc_chain, test_project_load_xges);
   tcase_add_test (tc_chain, test_project_add_keyframes);
   tcase_add_test (tc_chain, test_project_auto_transition);
+  tcase_add_test (tc_chain, test_project_proxy_editing);
   /*tcase_add_test (tc_chain, test_load_xges_and_play); */
   tcase_add_test (tc_chain, test_project_unexistant_effect);
 
