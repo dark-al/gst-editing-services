@@ -64,6 +64,9 @@ struct _GESProjectPrivate
   gchar *uri;
 
   GList *encoding_profiles;
+
+  GstEncodingProfile *proxy_profile;
+  GHashTable *proxied_assets;
 };
 
 typedef struct EmitLoadedInIdle
@@ -258,6 +261,10 @@ _dispose (GObject * object)
     g_hash_table_unref (priv->loaded_with_error);
   if (priv->formatter_asset)
     gst_object_unref (priv->formatter_asset);
+  if (priv->proxy_profile)
+    gst_object_unref (priv->proxy_profile);
+  if (priv->proxied_assets)
+    g_hash_table_unref (priv->proxied_assets);
 
   for (tmp = priv->formatters; tmp; tmp = tmp->next)
     ges_project_remove_formatter (GES_PROJECT (object), tmp->data);;
@@ -425,12 +432,15 @@ ges_project_init (GESProject * project)
   priv->formatters = NULL;
   priv->formatter_asset = NULL;
   priv->encoding_profiles = NULL;
+  priv->proxy_profile = NULL;
   priv->assets = g_hash_table_new_full (g_str_hash, g_str_equal,
       g_free, gst_object_unref);
   priv->loading_assets = g_hash_table_new_full (g_str_hash, g_str_equal,
       g_free, gst_object_unref);
   priv->loaded_with_error = g_hash_table_new_full (g_str_hash, g_str_equal,
       g_free, NULL);
+  priv->proxied_assets = g_hash_table_new_full (g_str_hash, g_str_equal,
+      g_free, gst_object_unref);
 }
 
 static void
@@ -945,4 +955,286 @@ ges_project_get_loading_assets (GESProject * project)
     ret = g_list_prepend (ret, gst_object_ref (value));
 
   return ret;
+}
+
+/**
+ * ges_project_set_proxy_profile:
+ * @project: (transfer none): The #GESProject to set.
+ * @profile: The #GstEncodingProfile for proxy editing in @project.
+ * @asset: The #GESUriClipAsset to set.
+ * Method to set proxy editing profile for assets in project. If we set an encoding @profile on a @project and don't set on a @asset, then it means it's automatic proxy editing mode. If we set and encoding @profile on a @project and set on a @asset, then it means it's manual proxy editing mode.
+ */
+gboolean
+ges_project_set_proxy_profile (GESProject * project,
+    GstEncodingProfile * profile, GESUriClipAsset * asset)
+{
+  GESProjectPrivate *priv;
+
+  g_return_val_if_fail (GES_IS_PROJECT (project), FALSE);
+  g_return_val_if_fail (GST_IS_ENCODING_PROFILE (profile), FALSE);
+
+  priv = project->priv;
+
+  if (asset == NULL) {
+    GstEncodingProfile *tmpprofile = GST_ENCODING_PROFILE (priv->proxy_profile);
+
+    if (GST_IS_ENCODING_PROFILE (tmpprofile)) {
+      if (g_strcmp0 (gst_encoding_profile_get_name (tmpprofile),
+              gst_encoding_profile_get_name (profile)) == 0) {
+        GST_INFO_OBJECT (project,
+            "Already have proxy profile: %s, replacing it",
+            gst_encoding_profile_get_name (profile));
+        gst_object_unref (priv->proxy_profile);
+      }
+    }
+
+    priv->proxy_profile = gst_object_ref (profile);
+  } else {
+    GESAsset *tmpasset;
+
+    g_return_val_if_fail (GES_IS_URI_CLIP_ASSET (asset), FALSE);
+
+    tmpasset = GES_ASSET (asset);
+
+    if (g_hash_table_lookup (priv->proxied_assets, ges_asset_get_id (tmpasset))) {
+      GST_INFO_OBJECT (project,
+          "Already have proxy profile %s for asset: %s, replacing it",
+          gst_encoding_profile_get_name (profile), ges_asset_get_id (tmpasset));
+    }
+    g_hash_table_insert (priv->proxied_assets,
+        g_strdup (ges_asset_get_id (tmpasset)), gst_object_ref (profile));
+  }
+
+  return TRUE;
+}
+
+/**
+ * ges_project_get_proxy_profile:
+ * @project: (transfer none): The #GESProject to get.
+ * @asset: The #GESUriClipAsset to get.
+ * Method to get proxy editing profile from @asset, used in @project. If we don't set an @asset, then it means it's get proxy editing profile from @project. 
+ * Returns: The #GstEncodingProfile used for proxy edition in @project or in @asset or %NULL if not used.
+ */
+GstEncodingProfile *
+ges_project_get_proxy_profile (GESProject * project, GESUriClipAsset * asset)
+{
+  GESProjectPrivate *priv;
+
+  g_return_val_if_fail (GES_IS_PROJECT (project), FALSE);
+
+  priv = project->priv;
+
+  if (asset) {
+    g_return_val_if_fail (GES_IS_URI_CLIP_ASSET (asset), FALSE);
+
+    return g_hash_table_lookup (priv->proxied_assets,
+        ges_asset_get_id (GES_ASSET (asset)));
+  }
+
+  return priv->proxy_profile;
+}
+
+static void
+pad_added_cb (GstElement * uridecodebin, GstPad * pad, GstElement * encodebin)
+{
+  GstPad *sinkpad;
+
+  sinkpad = gst_element_get_compatible_pad (encodebin, pad, NULL);
+
+  if (sinkpad == NULL) {
+    GstCaps *caps;
+
+    /* Ask encodebin for a compatible pad */
+    caps = gst_pad_query_caps (pad, NULL);
+    g_signal_emit_by_name (encodebin, "request-pad", caps, &sinkpad);
+    if (caps)
+      gst_caps_unref (caps);
+  }
+  if (sinkpad == NULL) {
+    g_print ("Couldn't get an encoding channel for pad %s:%s\n",
+        GST_DEBUG_PAD_NAME (pad));
+    return;
+  }
+
+  if (G_UNLIKELY (gst_pad_link (pad, sinkpad) != GST_PAD_LINK_OK)) {
+    g_print ("Couldn't link pads\n");
+  }
+
+  return;
+}
+
+static gboolean
+autoplug_continue_cb (GstElement * uridecodebin, GstPad * somepad,
+    GstCaps * caps, GstElement * encodebin)
+{
+  GstPad *sinkpad;
+
+  g_signal_emit_by_name (encodebin, "request-pad", caps, &sinkpad);
+
+  if (sinkpad == NULL)
+    return TRUE;
+
+  return FALSE;
+}
+
+static void
+bus_message_cb (GstBus * bus, GstMessage * message, GMainLoop * mainloop)
+{
+  switch (GST_MESSAGE_TYPE (message)) {
+    case GST_MESSAGE_ERROR:
+      gst_bus_set_flushing (bus, TRUE);
+      g_main_loop_quit (mainloop);
+      break;
+    case GST_MESSAGE_EOS:
+      g_main_loop_quit (mainloop);
+      break;
+    default:
+      break;
+  }
+}
+
+static void
+transcode (gchar * uri, gchar * outuri, GstEncodingProfile * profile)
+{
+  GMainLoop *mainloop;
+  GstElement *pipeline, *src, *ebin, *sink;
+  GstBus *bus;
+
+  mainloop = g_main_loop_new (NULL, FALSE);
+
+  pipeline = gst_pipeline_new ("encoding-pipeline");
+  src = gst_element_factory_make ("uridecodebin", NULL);
+
+  ebin = gst_element_factory_make ("encodebin", NULL);
+  sink = gst_element_make_from_uri (GST_URI_SINK, outuri, "sink", NULL);
+
+  g_object_set (src, "uri", uri, NULL);
+  g_object_set (ebin, "profile", profile, NULL);
+
+  g_signal_connect (src, "autoplug-continue", G_CALLBACK (autoplug_continue_cb),
+      ebin);
+  g_signal_connect (src, "pad-added", G_CALLBACK (pad_added_cb), ebin);
+
+  gst_bin_add_many (GST_BIN (pipeline), src, ebin, sink, NULL);
+  gst_element_link (ebin, sink);
+
+  mainloop = g_main_loop_new (NULL, FALSE);
+
+  bus = gst_pipeline_get_bus ((GstPipeline *) pipeline);
+  gst_bus_add_signal_watch (bus);
+  g_signal_connect (bus, "message", G_CALLBACK (bus_message_cb), mainloop);
+
+  if (gst_element_set_state (pipeline,
+          GST_STATE_PLAYING) == GST_STATE_CHANGE_FAILURE) {
+    return;
+  }
+
+  g_main_loop_run (mainloop);
+
+  gst_element_set_state (pipeline, GST_STATE_NULL);
+  gst_object_unref (pipeline);
+}
+
+static void
+project_loaded_cb (GESProject * project, GESTimeline * timeline,
+    GMainLoop * mainloop)
+{
+  GstEncodingProfile *profile;
+  GESUriClipAsset *asset;
+  GList *list;
+  gchar *uri, *outuri;
+
+  profile = ges_project_get_proxy_profile (project, NULL);
+
+  list = ges_project_list_assets (project, GES_TYPE_EXTRACTABLE);
+
+  while (list) {
+    asset = list->data;
+
+    uri = (gchar *) ges_asset_get_id (GES_ASSET (asset));
+    outuri = (gchar *) g_strconcat (g_strdup (uri), ".proxy", NULL);
+
+    transcode (uri, outuri, profile);
+
+    g_free (uri);
+    g_free (outuri);
+
+    list = g_list_next (list);
+  }
+
+  gst_object_unref (profile);
+  g_list_free_full (list, g_free);
+
+  g_main_loop_quit (mainloop);
+}
+
+/**
+ * ges_project_start_proxy_creation:
+ * @project: (transfer none): The #GESProject to get.
+ * @asset: The #GESUriClipAsset.
+ * @cancellable: optional #GCancellable object, NULL to ignore. 
+ * Method to start create proxies for proxy editing. If asset is NULL, it means start creation of all proxies.
+ * Returns: %TRUE if the creation was started, else %FALSE.
+ */
+gboolean
+ges_project_start_proxy_creation (GESProject * project, GESUriClipAsset * asset,
+    GCancellable * cancellable)
+{
+  GMainLoop *mainloop;
+  GESTimeline *timeline;
+
+  g_return_val_if_fail (GES_IS_PROJECT (project), FALSE);
+
+  if (asset) {
+    gchar *uri, *outuri;
+    GstEncodingProfile *profile;
+
+    g_return_val_if_fail (GES_IS_URI_CLIP_ASSET (asset), FALSE);
+
+    profile = ges_project_get_proxy_profile (project, asset);
+    if (profile == NULL) {
+      GST_DEBUG_OBJECT (project, "Project haven't asset: %s",
+          ges_asset_get_id (GES_ASSET (asset)));
+      return FALSE;
+    }
+
+    uri = (gchar *) ges_asset_get_id (GES_ASSET (asset));
+    outuri = (gchar *) g_strconcat (g_strdup (uri), ".proxy", NULL);
+
+    transcode (uri, outuri, profile);
+
+    g_free (uri);
+    g_free (outuri);
+    gst_object_unref (profile);
+
+    return TRUE;
+  }
+
+  mainloop = g_main_loop_new (NULL, FALSE);
+  timeline = ges_timeline_new ();
+  ges_project_load (project, timeline, NULL);
+
+  /* Connect the signals */
+  g_signal_connect (project, "loaded", (GCallback) project_loaded_cb, mainloop);
+
+  g_main_loop_run (mainloop);
+
+  g_main_loop_unref (mainloop);
+  g_signal_handlers_disconnect_by_func (project, (GCallback) project_loaded_cb,
+      mainloop);
+
+  return TRUE;
+}
+
+/**
+ * ges_project_pause_proxy_creation:
+ * @project: (transfer none): The #GESProject to get.
+ * @asset: The #GESUriClipAsset.
+ * Method to pause create proxies for proxy editing. If asset is NULL, it means pause creation of all proxies.
+ * Returns: %TRUE if the creation was started, else %FALSE.
+ */
+gboolean
+ges_project_pause_proxy_creation (GESProject * project, GESUriClipAsset * asset)
+{
+
 }
