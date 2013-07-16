@@ -132,3 +132,13 @@ ges_project_pause_proxy_creation_async (GESProject * project, GESUriClipAsset * 
 GstState
 ges_project_get_proxy_state (GESProject * project);
 
+/**
+ * ges_project_get_proxy_progress:
+ * @project: (transfer none): The #GESProject.
+ * @asset: The #GESUriClipAsset.
+ * Method to get progress of creating proxies for proxy editing.
+ * Returns: The value in range 0-100. If asset is NULL, it means get progress of all proxies.
+ */
+guint
+ges_project_get_proxy_progress (GESProject * project, GESUriClipAsset * asset);
+
