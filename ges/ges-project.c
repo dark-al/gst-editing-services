@@ -66,6 +66,7 @@ struct _GESProjectPrivate
   GList *encoding_profiles;
 
   GstEncodingProfile *proxy_profile;
+  GstElement *proxy_pipeline;
   GHashTable *proxied_assets;
   gboolean proxies_created;
 };
@@ -588,10 +589,11 @@ bus_message_cb (GstBus * bus, GstMessage * message, GMainLoop * mainloop)
 }
 
 static void
-transcode (gchar * uri, gchar * outuri, GstEncodingProfile * profile)
+transcode (gchar * uri, gchar * outuri, GstEncodingProfile * profile,
+    GstElement * pipeline)
 {
   GMainLoop *mainloop;
-  GstElement *pipeline, *src, *ebin, *sink;
+  GstElement *src, *ebin, *sink;
   GstBus *bus;
 
   mainloop = g_main_loop_new (NULL, FALSE);
@@ -629,10 +631,12 @@ transcode (gchar * uri, gchar * outuri, GstEncodingProfile * profile)
   gst_object_unref (pipeline);
 }
 
+/* FIXME We must create proxies one by one, not all together */
 static gboolean
 _create_proxies (GESProject * project)
 {
   GstEncodingProfile *profile;
+  GstElement *pipeline;
   GHashTableIter iter;
   gpointer key, value;
   gchar *uri, *outuri;
@@ -640,6 +644,7 @@ _create_proxies (GESProject * project)
   g_return_val_if_fail (GES_IS_PROJECT (project), FALSE);
 
   profile = ges_project_get_proxy_profile (project, NULL);
+  pipeline = project->priv->proxy_pipeline;
   if (GST_IS_ENCODING_PROFILE (profile)) {
     g_hash_table_iter_init (&iter, project->priv->assets);
     while (g_hash_table_iter_next (&iter, &key, &value)) {
@@ -647,7 +652,7 @@ _create_proxies (GESProject * project)
       /*FIXME We should let the user define where the proxy should lend.... We need a new API for that */
       outuri = (gchar *) g_strconcat (g_strdup (uri), ".proxy", NULL);
 
-      transcode (uri, outuri, profile);
+      transcode (uri, outuri, profile, pipeline);
 
       g_free (outuri);
     }
@@ -676,7 +681,6 @@ ges_project_set_loaded (GESProject * project, GESFormatter * formatter)
   g_signal_emit (project, _signals[LOADED_SIGNAL], 0, formatter->timeline);
 
   if (project->priv->proxies_created == FALSE) {
-    /* FIXME never start, because loaded project don't have proxy encoding profile */
     _create_proxies (project);
   }
 
@@ -1186,13 +1190,22 @@ ges_project_start_proxy_creation (GESProject * project, GESUriClipAsset * asset,
 {
   g_return_val_if_fail (GES_IS_PROJECT (project), FALSE);
 
+  if (GST_IS_ELEMENT (project->priv->proxy_pipeline)) {
+    if (gst_element_set_state (project->priv->proxy_pipeline,
+            GST_STATE_PLAYING) == GST_STATE_CHANGE_FAILURE) {
+      return FALSE;
+    }
+  }
+
   if (asset) {
     gchar *uri, *outuri;
     GstEncodingProfile *profile;
+    GstElement *pipeline;
 
     g_return_val_if_fail (GES_IS_URI_CLIP_ASSET (asset), FALSE);
 
     profile = ges_project_get_proxy_profile (project, asset);
+    pipeline = project->priv->proxy_pipeline;
     if (profile == NULL) {
       GST_DEBUG_OBJECT (project, "Project haven't asset: %s",
           ges_asset_get_id (GES_ASSET (asset)));
@@ -1202,7 +1215,7 @@ ges_project_start_proxy_creation (GESProject * project, GESUriClipAsset * asset,
     uri = (gchar *) ges_asset_get_id (GES_ASSET (asset));
     outuri = (gchar *) g_strconcat (g_strdup (uri), ".proxy", NULL);
 
-    transcode (uri, outuri, profile);
+    transcode (uri, outuri, profile, pipeline);
 
     g_free (uri);
     g_free (outuri);
@@ -1215,6 +1228,39 @@ ges_project_start_proxy_creation (GESProject * project, GESUriClipAsset * asset,
     if (project->priv->proxies_created == FALSE) {
       _create_proxies (project);
     }
+  }
+
+  return TRUE;
+}
+
+/**
+ * ges_project_pause_proxy_creation:
+ * @project: (transfer none): The #GESProject to get.
+ * @asset: The #GESUriClipAsset.
+ * Method to pause create proxies for proxy editing. If asset is NULL, it means pause creation of all proxies.
+ * Returns: %TRUE if the creation was paused, else %FALSE.
+ */
+gboolean
+ges_project_pause_proxy_creation (GESProject * project, GESUriClipAsset * asset)
+{
+  g_return_val_if_fail (GES_IS_PROJECT (project), FALSE);
+
+  if (asset) {
+    GstEncodingProfile *profile;
+
+    g_return_val_if_fail (GES_IS_URI_CLIP_ASSET (asset), FALSE);
+
+    profile = ges_project_get_proxy_profile (project, asset);
+    if (profile == NULL) {
+      GST_DEBUG_OBJECT (project, "Project haven't asset: %s",
+          ges_asset_get_id (GES_ASSET (asset)));
+      return FALSE;
+    }
+  }
+
+  if (gst_element_set_state (project->priv->proxy_pipeline,
+          GST_STATE_PAUSED) == GST_STATE_CHANGE_FAILURE) {
+    return FALSE;
   }
 
   return TRUE;
