@@ -1265,3 +1265,21 @@ ges_project_pause_proxy_creation (GESProject * project, GESUriClipAsset * asset)
 
   return TRUE;
 }
+
+/**
+ * ges_project_get_proxy_state:
+ * @project: (transfer none): The #GESProject to get.
+ * Method to get #GstState for proxy editing.
+ * Returns: The #GstState used for proxy edition in project.
+ */
+GstState
+ges_project_get_proxy_state (GESProject * project)
+{
+  GstState state;
+  g_return_val_if_fail (GES_IS_PROJECT (project), FALSE);
+
+  gst_element_get_state (project->priv->proxy_pipeline, &state, NULL,
+      GST_CLOCK_TIME_NONE);
+
+  return state;
+}
