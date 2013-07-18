@@ -105,7 +105,7 @@ const GList *ges_project_list_encoding_profiles (GESProject *project);
 gboolean ges_project_set_proxy_profile (GESProject * project, GstEncodingProfile * profile, GESUriClipAsset * asset);
 GstEncodingProfile * ges_project_get_proxy_profile (GESProject * project, GESUriClipAsset * asset);
 gboolean ges_project_start_proxy_creation (GESProject * project, GESUriClipAsset * asset, GCancellable * cancellable);
-gboolean ges_project_pause_proxy_creation (GESProject * project, GESUriClipAsset * asset);
+gboolean ges_project_pause_proxy_creation (GESProject * project);
 GstState ges_project_get_proxy_state (GESProject * project);
 
 G_END_DECLS

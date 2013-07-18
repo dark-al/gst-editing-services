@@ -1237,26 +1237,13 @@ ges_project_start_proxy_creation (GESProject * project, GESUriClipAsset * asset,
  * ges_project_pause_proxy_creation:
  * @project: (transfer none): The #GESProject to get.
  * @asset: The #GESUriClipAsset.
- * Method to pause create proxies for proxy editing. If asset is NULL, it means pause creation of all proxies.
+ * Method to pause create proxies for proxy editing.
  * Returns: %TRUE if the creation was paused, else %FALSE.
  */
 gboolean
-ges_project_pause_proxy_creation (GESProject * project, GESUriClipAsset * asset)
+ges_project_pause_proxy_creation (GESProject * project)
 {
   g_return_val_if_fail (GES_IS_PROJECT (project), FALSE);
-
-  if (asset) {
-    GstEncodingProfile *profile;
-
-    g_return_val_if_fail (GES_IS_URI_CLIP_ASSET (asset), FALSE);
-
-    profile = ges_project_get_proxy_profile (project, asset);
-    if (profile == NULL) {
-      GST_DEBUG_OBJECT (project, "Project haven't asset: %s",
-          ges_asset_get_id (GES_ASSET (asset)));
-      return FALSE;
-    }
-  }
 
   if (gst_element_set_state (project->priv->proxy_pipeline,
           GST_STATE_PAUSED) == GST_STATE_CHANGE_FAILURE) {

@@ -106,11 +106,11 @@ ges_project_start_proxy_creation_async (GESProject * project, GESUriClipAsset * 
  * ges_project_pause_proxy_creation:
  * @project: (transfer none): The #GESProject to get.
  * @asset: The #GESUriClipAsset.
- * Method to pause create proxies for proxy editing. If asset is NULL, it means pause creation of all proxies.
+ * Method to pause create proxies for proxy editing.
  * Returns: %TRUE if the creation was paused, else %FALSE.
  */
 gboolean
-ges_project_pause_proxy_creation (GESProject * project, GESUriClipAsset * asset);
+ges_project_pause_proxy_creation (GESProject * project);
 
 /**
  * ges_project_pause_proxy_creation_async:
@@ -118,10 +118,9 @@ ges_project_pause_proxy_creation (GESProject * project, GESUriClipAsset * asset)
  * @asset: The #GESUriClipAsset.
  * @callback: a #GAsyncReadyCallback to call when the initialization is finished.
  * @user_data: The user data to pass when callback is called.
- * Method to pause create proxies for proxy editing asyncronously, callback will be called when the assets is ready to be used or if an error occured. If asset is NULL, it means pause creation of all proxies.
- */
+ * Method to pause create proxies for proxy editing asyncronously, callback will be called when the assets is ready to be used or if an error occured.
 void
-ges_project_pause_proxy_creation_async (GESProject * project, GESUriClipAsset * asset, GAsyncReadyCallback callback, gpointer user_data);
+ges_project_pause_proxy_creation_async (GESProject * project, GAsyncReadyCallback callback, gpointer user_data);
 
 /**
  * ges_project_get_proxy_state:
