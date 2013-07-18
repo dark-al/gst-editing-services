@@ -134,12 +134,11 @@ ges_project_get_proxy_state (GESProject * project);
 /**
  * ges_project_get_proxy_progress:
  * @project: (transfer none): The #GESProject.
- * @asset: The #GESUriClipAsset.
  * Method to get progress of creating proxies for proxy editing.
  * Returns: The value in range 0-100. If asset is NULL, it means get progress of all proxies.
  */
 guint
-ges_project_get_proxy_progress (GESProject * project, GESUriClipAsset * asset);
+ges_project_get_proxy_progress (GESProject * project);
 
 /**
  * ges_project_set_proxy_uri:
@@ -155,7 +154,8 @@ ges_project_set_proxy_uri (GESProject * project, gchar * uri);
  * @project: (transfer none): The #GESProject.
  * @asset: The #GESUriClipAsset.
  * Method to get user specific uri of created proxies for proxy editing.
-* Returns: The @uri used for proxy edition in project.
+ * Returns: The @uri used for proxy edition in project.
+ */
 const gchar *
 ges_project_get_proxy_uri (GESProject * project);
 
