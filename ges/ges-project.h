@@ -107,6 +107,8 @@ GstEncodingProfile * ges_project_get_proxy_profile (GESProject * project, GESUri
 gboolean ges_project_start_proxy_creation (GESProject * project, GESUriClipAsset * asset, GCancellable * cancellable);
 gboolean ges_project_pause_proxy_creation (GESProject * project);
 GstState ges_project_get_proxy_state (GESProject * project);
+gboolean ges_project_set_proxies_location (GESProject * project, const gchar * uri);
+const gchar * ges_project_get_proxies_location (GESProject * project);
 
 G_END_DECLS
 

@@ -670,6 +670,9 @@ GST_START_TEST (test_project_proxy_editing)
   tmpprofile = ges_project_get_proxy_profile (project, NULL);
   fail_unless (gst_encoding_profile_is_equal (profile, tmpprofile));
 
+  fail_unless (ges_project_set_proxies_location (project,
+          "/home/dark-al/proxy/"));
+
   ges_project_start_proxy_creation (project, NULL, NULL);
 
   gst_object_unref (timeline);

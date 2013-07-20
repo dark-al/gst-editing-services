@@ -69,6 +69,7 @@ struct _GESProjectPrivate
   GstElement *proxy_pipeline;
   GHashTable *proxied_assets;
   gboolean proxies_created;
+  gchar *proxies_location;
 };
 
 typedef struct EmitLoadedInIdle
@@ -267,6 +268,8 @@ _dispose (GObject * object)
     gst_object_unref (priv->proxy_profile);
   if (priv->proxied_assets)
     g_hash_table_unref (priv->proxied_assets);
+  if (priv->proxies_location)
+    g_free (priv->proxies_location);
 
   for (tmp = priv->formatters; tmp; tmp = tmp->next)
     ges_project_remove_formatter (GES_PROJECT (object), tmp->data);;
@@ -436,6 +439,7 @@ ges_project_init (GESProject * project)
   priv->encoding_profiles = NULL;
   priv->proxy_profile = NULL;
   priv->proxies_created = FALSE;
+  priv->proxies_location = NULL;
   priv->assets = g_hash_table_new_full (g_str_hash, g_str_equal,
       g_free, gst_object_unref);
   priv->loading_assets = g_hash_table_new_full (g_str_hash, g_str_equal,
@@ -635,6 +639,7 @@ transcode (gchar * uri, gchar * outuri, GstEncodingProfile * profile,
 static gboolean
 _create_proxies (GESProject * project)
 {
+  GESProjectPrivate *priv;
   GstEncodingProfile *profile;
   GstElement *pipeline;
   GHashTableIter iter;
@@ -643,14 +648,21 @@ _create_proxies (GESProject * project)
 
   g_return_val_if_fail (GES_IS_PROJECT (project), FALSE);
 
+  priv = project->priv;
+
   profile = ges_project_get_proxy_profile (project, NULL);
   pipeline = project->priv->proxy_pipeline;
   if (GST_IS_ENCODING_PROFILE (profile)) {
-    g_hash_table_iter_init (&iter, project->priv->assets);
+    g_hash_table_iter_init (&iter, priv->assets);
     while (g_hash_table_iter_next (&iter, &key, &value)) {
       uri = (gchar *) key;
-      /*FIXME We should let the user define where the proxy should lend.... We need a new API for that */
       outuri = (gchar *) g_strconcat (g_strdup (uri), ".proxy", NULL);
+      if (priv->proxies_location) {
+        outuri =
+            (gchar *) g_strconcat (g_strdup (priv->proxies_location),
+            g_path_get_basename (g_filename_from_uri (outuri, NULL, NULL)),
+            NULL);
+      }
 
       transcode (uri, outuri, profile, pipeline);
 
@@ -1214,6 +1226,11 @@ ges_project_start_proxy_creation (GESProject * project, GESUriClipAsset * asset,
 
     uri = (gchar *) ges_asset_get_id (GES_ASSET (asset));
     outuri = (gchar *) g_strconcat (g_strdup (uri), ".proxy", NULL);
+    if (priv->proxies_location) {
+      outuri =
+          (gchar *) g_strconcat (g_strdup (priv->proxies_location),
+          g_path_get_basename (g_filename_from_uri (outuri, NULL, NULL)), NULL);
+    }
 
     transcode (uri, outuri, profile, pipeline);
 
@@ -1269,4 +1286,56 @@ ges_project_get_proxy_state (GESProject * project)
       GST_CLOCK_TIME_NONE);
 
   return state;
+}
+
+/**
+ * ges_project_set_proxies_location:
+ * @project: (transfer none): The #GESProject.
+ * @location: New location.
+ * Method to set user specific location of created proxies for proxy editing.
+ */
+gboolean
+ges_project_set_proxies_location (GESProject * project, const gchar * location)
+{
+  GESProjectPrivate *priv;
+  const gchar *uri;
+
+  g_return_val_if_fail (GES_IS_PROJECT (project), FALSE);
+
+  priv = project->priv;
+
+  if (location == NULL) {
+    GST_LOG_OBJECT (project, "Invalid location: %s", location);
+    return FALSE;
+  }
+
+  if (gst_uri_is_valid (location)) {
+    uri = location;
+  } else {
+    uri = (const gchar *) gst_filename_to_uri (location, NULL);
+  }
+
+  if (priv->proxies_location) {
+    GST_INFO_OBJECT (project, "Already have proxies location: %s, replacing it",
+        priv->proxies_location);
+    g_free (priv->proxies_location);
+  }
+
+  priv->proxies_location = g_strdup (uri);
+
+  return TRUE;
+}
+
+/**
+ * ges_project_get_proxies_location:
+ * @project: (transfer none): The #GESProject.
+ * Method to get user specific location of created proxies for proxy editing.
+ * Returns: The location used for proxy edition in project.
+ */
+const gchar *
+ges_project_get_proxies_location (GESProject * project)
+{
+  g_return_val_if_fail (GES_IS_PROJECT (project), FALSE);
+
+  return (const gchar *) project->priv->proxies_location;
 }

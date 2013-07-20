@@ -141,22 +141,22 @@ guint
 ges_project_get_proxy_progress (GESProject * project);
 
 /**
- * ges_project_set_proxy_uri:
+ * ges_project_set_proxies_location:
  * @project: (transfer none): The #GESProject.
- * @uri: New uri.
- * Method to set user specific uri of created proxies for proxy editing.
+ * @location: New location.
+ * Method to set user specific location of created proxies for proxy editing.
+ * Returns: %TRUE if the uri was setted, else %FALSE.
  */
-void
-ges_project_set_proxy_uri (GESProject * project, gchar * uri);
+gboolean
+ges_project_set_proxies_location (GESProject * project, gchar * location);
 
 /**
- * ges_project_get_proxy_uri:
+ * ges_project_get_proxies_location:
  * @project: (transfer none): The #GESProject.
- * @asset: The #GESUriClipAsset.
- * Method to get user specific uri of created proxies for proxy editing.
- * Returns: The @uri used for proxy edition in project.
+ * Method to get user specific location of created proxies for proxy editing.
+ * Returns: The location used for proxy edition in project.
  */
 const gchar *
-ges_project_get_proxy_uri (GESProject * project);
+ges_project_get_proxies_location (GESProject * project);
 
 
