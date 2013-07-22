@@ -1114,10 +1114,11 @@ ges_project_get_loading_assets (GESProject * project)
 
 /**
  * ges_project_set_proxy_profile:
- * @project: (transfer none): The #GESProject to set.
+ * @project: (transfer none) The #GESProject to set.
  * @profile: The #GstEncodingProfile for proxy editing in @project.
- * @asset: The #GESUriClipAsset to set.
+ * @asset: (allow-none) The #GESUriClipAsset to set.
  * Method to set proxy editing profile for assets in project. If we set an encoding @profile on a @project and don't set on a @asset, then it means it's automatic proxy editing mode. If we set and encoding @profile on a @project and set on a @asset, then it means it's manual proxy editing mode.
+ * Returns: %TRUE if the @profile was setted, else %FALSE.
  */
 gboolean
 ges_project_set_proxy_profile (GESProject * project,
@@ -1164,10 +1165,10 @@ ges_project_set_proxy_profile (GESProject * project,
 
 /**
  * ges_project_get_proxy_profile:
- * @project: (transfer none): The #GESProject to get.
- * @asset: The #GESUriClipAsset to get.
+ * @project: (transfer none) The #GESProject to get.
+ * @asset: (allow-none) The #GESUriClipAsset to get.
  * Method to get proxy editing profile from @asset, used in @project. If we don't set an @asset, then it means it's get proxy editing profile from @project. 
- * Returns: The #GstEncodingProfile used for proxy edition in @project or in @asset or %NULL if not used.
+ * Returns: (transfer none) The #GstEncodingProfile used for proxy edition in @project or in @asset or %NULL if not used.
  */
 GstEncodingProfile *
 ges_project_get_proxy_profile (GESProject * project, GESUriClipAsset * asset)
@@ -1190,9 +1191,9 @@ ges_project_get_proxy_profile (GESProject * project, GESUriClipAsset * asset)
 
 /**
  * ges_project_start_proxy_creation:
- * @project: (transfer none): The #GESProject to get.
- * @asset: The #GESUriClipAsset.
- * @cancellable: optional #GCancellable object, NULL to ignore. 
+ * @project: (transfer none) The #GESProject.
+ * @asset: (allow-none) The #GESUriClipAsset.
+ * @cancellable: (allow-none) optional #GCancellable object, NULL to ignore. 
  * Method to start create proxies for proxy editing. If asset is NULL, it means start creation of all proxies.
  * Returns: %TRUE if the creation was started, else %FALSE.
  */
@@ -1200,10 +1201,14 @@ gboolean
 ges_project_start_proxy_creation (GESProject * project, GESUriClipAsset * asset,
     GCancellable * cancellable)
 {
+  GESProjectPrivate *priv;
+
   g_return_val_if_fail (GES_IS_PROJECT (project), FALSE);
 
-  if (GST_IS_ELEMENT (project->priv->proxy_pipeline)) {
-    if (gst_element_set_state (project->priv->proxy_pipeline,
+  priv = project->priv;
+
+  if (GST_IS_ELEMENT (priv->proxy_pipeline)) {
+    if (gst_element_set_state (priv->proxy_pipeline,
             GST_STATE_PLAYING) == GST_STATE_CHANGE_FAILURE) {
       return FALSE;
     }
@@ -1217,7 +1222,7 @@ ges_project_start_proxy_creation (GESProject * project, GESUriClipAsset * asset,
     g_return_val_if_fail (GES_IS_URI_CLIP_ASSET (asset), FALSE);
 
     profile = ges_project_get_proxy_profile (project, asset);
-    pipeline = project->priv->proxy_pipeline;
+    pipeline = priv->proxy_pipeline;
     if (profile == NULL) {
       GST_DEBUG_OBJECT (project, "Project haven't asset: %s",
           ges_asset_get_id (GES_ASSET (asset)));
@@ -1252,8 +1257,7 @@ ges_project_start_proxy_creation (GESProject * project, GESUriClipAsset * asset,
 
 /**
  * ges_project_pause_proxy_creation:
- * @project: (transfer none): The #GESProject to get.
- * @asset: The #GESUriClipAsset.
+ * @project: (transfer none) The #GESProject.
  * Method to pause create proxies for proxy editing.
  * Returns: %TRUE if the creation was paused, else %FALSE.
  */
@@ -1272,9 +1276,9 @@ ges_project_pause_proxy_creation (GESProject * project)
 
 /**
  * ges_project_get_proxy_state:
- * @project: (transfer none): The #GESProject to get.
+ * @project: (transfer none) The #GESProject to get.
  * Method to get #GstState for proxy editing.
- * Returns: The #GstState used for proxy edition in project.
+ * Returns: (transfer full) The #GstState used for proxy edition in project.
  */
 GstState
 ges_project_get_proxy_state (GESProject * project)
@@ -1290,9 +1294,10 @@ ges_project_get_proxy_state (GESProject * project)
 
 /**
  * ges_project_set_proxies_location:
- * @project: (transfer none): The #GESProject.
+ * @project: (transfer none) The #GESProject to set.
  * @location: New location.
  * Method to set user specific location of created proxies for proxy editing.
+ * Returns: %TRUE if the location was setted, else %FALSE.
  */
 gboolean
 ges_project_set_proxies_location (GESProject * project, const gchar * location)
@@ -1328,9 +1333,9 @@ ges_project_set_proxies_location (GESProject * project, const gchar * location)
 
 /**
  * ges_project_get_proxies_location:
- * @project: (transfer none): The #GESProject.
+ * @project: (transfer none) The #GESProject to get.
  * Method to get user specific location of created proxies for proxy editing.
- * Returns: The location used for proxy edition in project.
+ * Returns: (transfer none) The location used for proxy edition in project.
  */
 const gchar *
 ges_project_get_proxies_location (GESProject * project)
