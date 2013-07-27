@@ -663,17 +663,14 @@ GST_START_TEST (test_project_proxy_editing)
   timeline = GES_TIMELINE (ges_asset_extract (GES_ASSET (project), NULL));
   fail_unless (GES_IS_TIMELINE (timeline));
 
-  g_main_loop_run (mainloop);
-
   profile = _create_ogg_theora_profile ();
   ges_project_set_proxy_profile (project, profile, NULL);
   tmpprofile = ges_project_get_proxy_profile (project, NULL);
   fail_unless (gst_encoding_profile_is_equal (profile, tmpprofile));
 
-  fail_unless (ges_project_set_proxies_location (project,
-          "/home/dark-al/proxy/"));
-
   ges_project_start_proxy_creation (project, NULL, NULL);
+
+  g_main_loop_run (mainloop);
 
   gst_object_unref (timeline);
   gst_object_unref (project);

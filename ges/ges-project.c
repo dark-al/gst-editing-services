@@ -70,6 +70,7 @@ struct _GESProjectPrivate
   GHashTable *proxied_assets;
   gboolean proxies_created;
   gchar *proxies_location;
+  GHashTableIter proxies_iter;
 };
 
 typedef struct EmitLoadedInIdle
@@ -100,6 +101,8 @@ enum
 };
 
 static GParamSpec *_properties[LAST_SIGNAL] = { 0 };
+
+static void transcode (GESProject * project, GESAsset * asset);
 
 static gboolean
 _emit_loaded_in_idle (EmitLoadedInIdle * data)
@@ -577,30 +580,53 @@ autoplug_continue_cb (GstElement * uridecodebin, GstPad * somepad,
 }
 
 static void
-bus_message_cb (GstBus * bus, GstMessage * message, GMainLoop * mainloop)
+bus_message_cb (GstBus * bus, GstMessage * message, GESProject * project)
 {
   switch (GST_MESSAGE_TYPE (message)) {
     case GST_MESSAGE_ERROR:
       gst_bus_set_flushing (bus, TRUE);
-      g_main_loop_quit (mainloop);
       break;
-    case GST_MESSAGE_EOS:
-      g_main_loop_quit (mainloop);
+    case GST_MESSAGE_EOS:{
+      gpointer key, value;
+
+      g_hash_table_iter_next (&project->priv->proxies_iter, &key, &value);
+      transcode (project, (GESAsset *) value);
       break;
+    }
     default:
       break;
   }
 }
 
 static void
-transcode (gchar * uri, gchar * outuri, GstEncodingProfile * profile,
-    GstElement * pipeline)
+transcode (GESProject * project, GESAsset * asset)
 {
-  GMainLoop *mainloop;
-  GstElement *src, *ebin, *sink;
+  GstElement *pipeline, *src, *ebin, *sink;
+  GstEncodingProfile *profile;
   GstBus *bus;
+  GESProjectPrivate *priv;
+  gchar *uri, *outuri;
+  gpointer key, value;
+  GHashTableIter iter;
 
-  mainloop = g_main_loop_new (NULL, FALSE);
+  priv = project->priv;
+  profile = priv->proxy_profile;
+  pipeline = priv->proxy_pipeline;
+  iter = priv->proxies_iter;
+
+  if (asset == NULL) {
+    g_hash_table_iter_init (&iter, priv->assets);
+    g_hash_table_iter_next (&iter, &key, &value);
+    asset = (GESAsset *) value;
+  }
+
+  uri = (gchar *) ges_asset_get_id (GES_ASSET (asset));
+  outuri = (gchar *) g_strconcat (g_strdup (uri), ".proxy", NULL);
+  if (priv->proxies_location) {
+    outuri =
+        (gchar *) g_strconcat (g_strdup (priv->proxies_location),
+        g_path_get_basename (g_filename_from_uri (outuri, NULL, NULL)), NULL);
+  }
 
   pipeline = gst_pipeline_new ("encoding-pipeline");
   src = gst_element_factory_make ("uridecodebin", NULL);
@@ -618,58 +644,33 @@ transcode (gchar * uri, gchar * outuri, GstEncodingProfile * profile,
   gst_bin_add_many (GST_BIN (pipeline), src, ebin, sink, NULL);
   gst_element_link (ebin, sink);
 
-  mainloop = g_main_loop_new (NULL, FALSE);
-
   bus = gst_pipeline_get_bus ((GstPipeline *) pipeline);
   gst_bus_add_signal_watch (bus);
-  g_signal_connect (bus, "message", G_CALLBACK (bus_message_cb), mainloop);
+  g_signal_connect (bus, "message", G_CALLBACK (bus_message_cb), project);
 
   if (gst_element_set_state (pipeline,
           GST_STATE_PLAYING) == GST_STATE_CHANGE_FAILURE) {
     return;
   }
 
-  g_main_loop_run (mainloop);
+  g_free (uri);
+  g_free (outuri);
 
   gst_element_set_state (pipeline, GST_STATE_NULL);
   gst_object_unref (pipeline);
 }
 
-/* FIXME We must create proxies one by one, not all together */
 static gboolean
 _create_proxies (GESProject * project)
 {
-  GESProjectPrivate *priv;
   GstEncodingProfile *profile;
-  GstElement *pipeline;
-  GHashTableIter iter;
-  gpointer key, value;
-  gchar *uri, *outuri;
 
   g_return_val_if_fail (GES_IS_PROJECT (project), FALSE);
 
-  priv = project->priv;
-
   profile = ges_project_get_proxy_profile (project, NULL);
-  pipeline = project->priv->proxy_pipeline;
   if (GST_IS_ENCODING_PROFILE (profile)) {
-    g_hash_table_iter_init (&iter, priv->assets);
-    while (g_hash_table_iter_next (&iter, &key, &value)) {
-      uri = (gchar *) key;
-      outuri = (gchar *) g_strconcat (g_strdup (uri), ".proxy", NULL);
-      if (priv->proxies_location) {
-        outuri =
-            (gchar *) g_strconcat (g_strdup (priv->proxies_location),
-            g_path_get_basename (g_filename_from_uri (outuri, NULL, NULL)),
-            NULL);
-      }
-
-      transcode (uri, outuri, profile, pipeline);
-
-      g_free (outuri);
-    }
+    transcode (project, NULL);
     project->priv->proxies_created = TRUE;
-
     gst_object_unref (profile);
   }
 
@@ -1215,32 +1216,19 @@ ges_project_start_proxy_creation (GESProject * project, GESUriClipAsset * asset,
   }
 
   if (asset) {
-    gchar *uri, *outuri;
     GstEncodingProfile *profile;
-    GstElement *pipeline;
 
     g_return_val_if_fail (GES_IS_URI_CLIP_ASSET (asset), FALSE);
 
     profile = ges_project_get_proxy_profile (project, asset);
-    pipeline = priv->proxy_pipeline;
     if (profile == NULL) {
       GST_DEBUG_OBJECT (project, "Project haven't asset: %s",
           ges_asset_get_id (GES_ASSET (asset)));
       return FALSE;
     }
 
-    uri = (gchar *) ges_asset_get_id (GES_ASSET (asset));
-    outuri = (gchar *) g_strconcat (g_strdup (uri), ".proxy", NULL);
-    if (priv->proxies_location) {
-      outuri =
-          (gchar *) g_strconcat (g_strdup (priv->proxies_location),
-          g_path_get_basename (g_filename_from_uri (outuri, NULL, NULL)), NULL);
-    }
+    transcode (project, GES_ASSET (asset));
 
-    transcode (uri, outuri, profile, pipeline);
-
-    g_free (uri);
-    g_free (outuri);
     gst_object_unref (profile);
 
     return TRUE;
