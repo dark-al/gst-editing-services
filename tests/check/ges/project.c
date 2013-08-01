@@ -639,6 +639,13 @@ _create_ogg_theora_profile (void)
   return (GstEncodingProfile *) prof;
 }
 
+static void
+project_proxies_created_cb (GESProject * project, GMainLoop * mainloop)
+{
+  g_main_loop_quit (mainloop);
+}
+
+
 GST_START_TEST (test_project_proxy_editing)
 {
   GMainLoop *mainloop;
@@ -653,7 +660,8 @@ GST_START_TEST (test_project_proxy_editing)
   fail_unless (GES_IS_PROJECT (project));
 
   /* Connect the signals */
-  g_signal_connect (project, "loaded", (GCallback) project_loaded_cb, mainloop);
+  g_signal_connect (project, "proxies_created",
+      (GCallback) project_proxies_created_cb, mainloop);
 
   /* Make sure we update the project's dummy URL to some actual URL */
   g_signal_connect (project, "missing-uri", (GCallback) _set_new_uri, NULL);
@@ -677,8 +685,7 @@ GST_START_TEST (test_project_proxy_editing)
   g_free (uri);
 
   g_main_loop_unref (mainloop);
-  g_signal_handlers_disconnect_by_func (project, (GCallback) project_loaded_cb,
-      mainloop);
+  g_cancellable_disconnect (cancellable, mainloop);
 }
 
 GST_END_TEST;

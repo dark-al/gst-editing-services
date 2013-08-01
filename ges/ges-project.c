@@ -86,6 +86,7 @@ enum
   ASSET_ADDED_SIGNAL,
   ASSET_REMOVED_SIGNAL,
   MISSING_URI_SIGNAL,
+  PROXIES_CREATED_SIGNAL,
   LAST_SIGNAL
 };
 
@@ -423,6 +424,15 @@ ges_project_class_init (GESProjectClass * klass)
       NULL, NULL, g_cclosure_marshal_generic,
       G_TYPE_NONE, 3, G_TYPE_ERROR, G_TYPE_STRING, G_TYPE_GTYPE);
 
+  /**
+   * GESProject::proxies-created:
+   * @project: the #GESProject reporting that a proxies created.
+   */
+  _signals[PROXIES_CREATED_SIGNAL] =
+      g_signal_new ("proxies-created", G_TYPE_FROM_CLASS (klass),
+      G_SIGNAL_RUN_LAST, G_STRUCT_OFFSET (GESProjectClass, proxies_created),
+      NULL, NULL, g_cclosure_marshal_generic, G_TYPE_NONE, 0);
+
   object_class->dispose = _dispose;
   object_class->dispose = _finalize;
 
@@ -540,43 +550,23 @@ static void
 pad_added_cb (GstElement * uridecodebin, GstPad * pad, GstElement * encodebin)
 {
   GstPad *sinkpad;
+  GstCaps *caps;
 
-  sinkpad = gst_element_get_compatible_pad (encodebin, pad, NULL);
-
+  /* Ask encodebin for a compatible pad */
+  caps = gst_pad_query_caps (pad, NULL);
+  g_signal_emit_by_name (encodebin, "request-pad", caps, &sinkpad);
   if (sinkpad == NULL) {
-    GstCaps *caps;
-
-    /* Ask encodebin for a compatible pad */
-    caps = gst_pad_query_caps (pad, NULL);
-    g_signal_emit_by_name (encodebin, "request-pad", caps, &sinkpad);
-    if (caps)
-      gst_caps_unref (caps);
-  }
-  if (sinkpad == NULL) {
-    g_print ("Couldn't get an encoding channel for pad %s:%s\n",
+    GST_ERROR ("Couldn't get an encoding channel for pad %s:%s\n",
         GST_DEBUG_PAD_NAME (pad));
     return;
   }
 
   if (G_UNLIKELY (gst_pad_link (pad, sinkpad) != GST_PAD_LINK_OK)) {
-    g_print ("Couldn't link pads\n");
+    GST_ERROR ("Couldn't link pads srccaps: %" GST_PTR_FORMAT "sinkcaps: %"
+        GST_PTR_FORMAT, gst_pad_query_caps (sinkpad, NULL), caps);
   }
 
   return;
-}
-
-static gboolean
-autoplug_continue_cb (GstElement * uridecodebin, GstPad * somepad,
-    GstCaps * caps, GstElement * encodebin)
-{
-  GstPad *sinkpad;
-
-  g_signal_emit_by_name (encodebin, "request-pad", caps, &sinkpad);
-
-  if (sinkpad == NULL)
-    return TRUE;
-
-  return FALSE;
 }
 
 static void
@@ -584,13 +574,37 @@ bus_message_cb (GstBus * bus, GstMessage * message, GESProject * project)
 {
   switch (GST_MESSAGE_TYPE (message)) {
     case GST_MESSAGE_ERROR:
+      GESProjectPrivate * priv;
+
+      priv = project->priv;
+
       gst_bus_set_flushing (bus, TRUE);
+      gst_element_set_state (priv->proxy_pipeline, GST_STATE_NULL);
+      gst_object_unref (priv->proxy_pipeline);
       break;
     case GST_MESSAGE_EOS:{
+      GESProjectPrivate *priv;
       gpointer key, value;
+      gboolean next_proxy = FALSE;
 
-      g_hash_table_iter_next (&project->priv->proxies_iter, &key, &value);
-      transcode (project, (GESAsset *) value);
+      priv = project->priv;
+
+      gst_element_set_state (priv->proxy_pipeline, GST_STATE_NULL);
+      gst_object_unref (priv->proxy_pipeline);
+
+      while ((next_proxy =
+              g_hash_table_iter_next (&priv->proxies_iter, &key, &value))) {
+        if (GES_IS_URI_CLIP_ASSET (value)) {
+          break;
+        }
+      }
+
+      if (next_proxy == TRUE) {
+        transcode (project, (GESAsset *) value);
+      } else {
+        g_signal_emit (project, _signals[PROXIES_CREATED_SIGNAL], 0, NULL);
+      }
+
       break;
     }
     default:
@@ -605,30 +619,33 @@ transcode (GESProject * project, GESAsset * asset)
   GstEncodingProfile *profile;
   GstBus *bus;
   GESProjectPrivate *priv;
-  gchar *uri, *outuri;
+  gchar *outuri;
+  const gchar *uri;
   gpointer key, value;
   GHashTableIter iter;
 
   priv = project->priv;
   profile = priv->proxy_profile;
-  pipeline = priv->proxy_pipeline;
-  iter = priv->proxies_iter;
 
   if (asset == NULL) {
     g_hash_table_iter_init (&iter, priv->assets);
     g_hash_table_iter_next (&iter, &key, &value);
+    priv->proxies_iter = iter;
     asset = (GESAsset *) value;
   }
 
-  uri = (gchar *) ges_asset_get_id (GES_ASSET (asset));
-  outuri = (gchar *) g_strconcat (g_strdup (uri), ".proxy", NULL);
+  uri = ges_asset_get_id (GES_ASSET (asset));
+  outuri = g_strconcat (g_strdup (uri), ".proxy", NULL);
   if (priv->proxies_location) {
     outuri =
         (gchar *) g_strconcat (g_strdup (priv->proxies_location),
         g_path_get_basename (g_filename_from_uri (outuri, NULL, NULL)), NULL);
   }
 
+  g_print ("URI: %s\n OUT: %s\n", uri, outuri);
+
   pipeline = gst_pipeline_new ("encoding-pipeline");
+  priv->proxy_pipeline = pipeline;
   src = gst_element_factory_make ("uridecodebin", NULL);
 
   ebin = gst_element_factory_make ("encodebin", NULL);
@@ -637,8 +654,6 @@ transcode (GESProject * project, GESAsset * asset)
   g_object_set (src, "uri", uri, NULL);
   g_object_set (ebin, "profile", profile, NULL);
 
-  g_signal_connect (src, "autoplug-continue", G_CALLBACK (autoplug_continue_cb),
-      ebin);
   g_signal_connect (src, "pad-added", G_CALLBACK (pad_added_cb), ebin);
 
   gst_bin_add_many (GST_BIN (pipeline), src, ebin, sink, NULL);
@@ -650,27 +665,27 @@ transcode (GESProject * project, GESAsset * asset)
 
   if (gst_element_set_state (pipeline,
           GST_STATE_PLAYING) == GST_STATE_CHANGE_FAILURE) {
+    GST_ERROR ("Could not set pipeline state to PLAYING");
     return;
   }
 
-  g_free (uri);
   g_free (outuri);
-
-  gst_element_set_state (pipeline, GST_STATE_NULL);
-  gst_object_unref (pipeline);
 }
 
 static gboolean
 _create_proxies (GESProject * project)
 {
   GstEncodingProfile *profile;
+  GESProjectPrivate *priv;
 
   g_return_val_if_fail (GES_IS_PROJECT (project), FALSE);
+
+  priv = project->priv;
 
   profile = ges_project_get_proxy_profile (project, NULL);
   if (GST_IS_ENCODING_PROFILE (profile)) {
     transcode (project, NULL);
-    project->priv->proxies_created = TRUE;
+    priv->proxies_created = TRUE;
     gst_object_unref (profile);
   }
 
@@ -730,7 +745,7 @@ ges_project_add_loading_asset (GESProject * project, GType extractable_type,
  * "asset-added" signal to get the asset when it finally gets added to
  * @project
  *
- * Returns: %TRUE if the asset started to be added %FALSE it was already
+ * Returns: %TRUE if the asset `ed to be added %FALSE it was already
  * in the project
  */
 gboolean
@@ -1190,6 +1205,15 @@ ges_project_get_proxy_profile (GESProject * project, GESUriClipAsset * asset)
   return priv->proxy_profile;
 }
 
+static void
+project_start_proxies_cancalled_cb (GCancellable * cancellable,
+    GESProject * project)
+{
+  gst_element_set_state (project->priv->proxy_pipeline, GST_STATE_NULL);
+  gst_object_unref (project->priv->proxy_pipeline);
+  g_cancellable_reset (cancellable);
+}
+
 /**
  * ges_project_start_proxy_creation:
  * @project: (transfer none) The #GESProject.
@@ -1207,6 +1231,11 @@ ges_project_start_proxy_creation (GESProject * project, GESUriClipAsset * asset,
   g_return_val_if_fail (GES_IS_PROJECT (project), FALSE);
 
   priv = project->priv;
+
+  if (cancellable) {
+    g_cancellable_connect (cancellable,
+        (GCallback) project_start_proxies_cancalled_cb, project, NULL);
+  }
 
   if (GST_IS_ELEMENT (priv->proxy_pipeline)) {
     if (gst_element_set_state (priv->proxy_pipeline,
@@ -1227,9 +1256,14 @@ ges_project_start_proxy_creation (GESProject * project, GESUriClipAsset * asset,
       return FALSE;
     }
 
-    transcode (project, GES_ASSET (asset));
+    if (GES_IS_URI_CLIP_ASSET (asset)) {
+      transcode (project, GES_ASSET (asset));
+    }
 
     gst_object_unref (profile);
+    if (cancellable) {
+      g_cancellable_disconnect (cancellable, 0);
+    }
 
     return TRUE;
   }

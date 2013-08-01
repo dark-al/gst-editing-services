@@ -68,6 +68,7 @@ struct _GESProjectClass
                               GType extractable_type);
   gboolean (*loaded)         (GESProject  * self,
                               GESTimeline * timeline);
+  void     (*proxies_created)(GESProject * self);
 
   gpointer _ges_reserved[GES_PADDING];
 };
