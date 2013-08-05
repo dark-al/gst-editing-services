@@ -68,7 +68,9 @@ struct _GESProjectClass
                               GType extractable_type);
   gboolean (*loaded)         (GESProject  * self,
                               GESTimeline * timeline);
-  void     (*proxies_created)(GESProject * self);
+  void     (*proxies_created) (GESProject * self);
+  void     (*proxies_creation_started) (GESProject * self);
+  void     (*proxies_creation_paused) (GESProject * self);
 
   gpointer _ges_reserved[GES_PADDING];
 };
@@ -106,7 +108,9 @@ const GList *ges_project_list_encoding_profiles (GESProject *project);
 gboolean ges_project_set_proxy_profile (GESProject * project, GstEncodingProfile * profile, GESUriClipAsset * asset);
 GstEncodingProfile * ges_project_get_proxy_profile (GESProject * project, GESUriClipAsset * asset);
 gboolean ges_project_start_proxy_creation (GESProject * project, GESUriClipAsset * asset, GCancellable * cancellable);
+void ges_project_start_proxy_creation_async (GESProject * project, GESUriClipAsset * asset, GCancellable * cancellable, GAsyncReadyCallback callback, gpointer user_data);
 gboolean ges_project_pause_proxy_creation (GESProject * project);
+void ges_project_pause_proxy_creation_async (GESProject * project, GAsyncReadyCallback callback, gpointer user_data);
 GstState ges_project_get_proxy_state (GESProject * project);
 gboolean ges_project_set_proxies_location (GESProject * project, const gchar * uri);
 const gchar * ges_project_get_proxies_location (GESProject * project);

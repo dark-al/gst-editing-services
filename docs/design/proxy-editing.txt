@@ -117,6 +117,7 @@ ges_project_pause_proxy_creation (GESProject * project);
  * @callback: a #GAsyncReadyCallback to call when the initialization is finished.
  * @user_data: The user data to pass when callback is called.
  * Method to pause create proxies for proxy editing asyncronously, callback will be called when the assets is ready to be used or if an error occured.
+ */
 void
 ges_project_pause_proxy_creation_async (GESProject * project, GAsyncReadyCallback callback, gpointer user_data);
 

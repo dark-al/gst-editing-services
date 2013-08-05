@@ -68,6 +68,7 @@ struct _GESProjectPrivate
   GstEncodingProfile *proxy_profile;
   GstElement *proxy_pipeline;
   GHashTable *proxied_assets;
+  gboolean proxies_creation_started;
   gboolean proxies_created;
   gchar *proxies_location;
   GHashTableIter proxies_iter;
@@ -86,6 +87,8 @@ enum
   ASSET_ADDED_SIGNAL,
   ASSET_REMOVED_SIGNAL,
   MISSING_URI_SIGNAL,
+  PROXIES_CREATION_STARTED_SIGNAL,
+  PROXIES_CREATION_PAUSED_SIGNAL,
   PROXIES_CREATED_SIGNAL,
   LAST_SIGNAL
 };
@@ -103,7 +106,7 @@ enum
 
 static GParamSpec *_properties[LAST_SIGNAL] = { 0 };
 
-static void transcode (GESProject * project, GESAsset * asset);
+static void _transcode (GESProject * project, GESAsset * asset);
 
 static gboolean
 _emit_loaded_in_idle (EmitLoadedInIdle * data)
@@ -270,6 +273,8 @@ _dispose (GObject * object)
     gst_object_unref (priv->formatter_asset);
   if (priv->proxy_profile)
     gst_object_unref (priv->proxy_profile);
+  if (priv->proxy_pipeline)
+    gst_object_unref (priv->proxy_pipeline);
   if (priv->proxied_assets)
     g_hash_table_unref (priv->proxied_assets);
   if (priv->proxies_location)
@@ -433,6 +438,26 @@ ges_project_class_init (GESProjectClass * klass)
       G_SIGNAL_RUN_LAST, G_STRUCT_OFFSET (GESProjectClass, proxies_created),
       NULL, NULL, g_cclosure_marshal_generic, G_TYPE_NONE, 0);
 
+  /**
+   * GESProject::proxies-creation-started:
+   * @project: the #GESProject reporting that a proxies creation started.
+   */
+  _signals[PROXIES_CREATION_STARTED_SIGNAL] =
+      g_signal_new ("proxies-creation-started", G_TYPE_FROM_CLASS (klass),
+      G_SIGNAL_RUN_LAST, G_STRUCT_OFFSET (GESProjectClass,
+          proxies_creation_started), NULL, NULL, g_cclosure_marshal_generic,
+      G_TYPE_NONE, 0);
+
+  /**
+   * GESProject::proxies-creation-paused:
+   * @project: the #GESProject reporting that a proxies creation paused.
+   */
+  _signals[PROXIES_CREATION_PAUSED_SIGNAL] =
+      g_signal_new ("proxies-creation-paused", G_TYPE_FROM_CLASS (klass),
+      G_SIGNAL_RUN_LAST, G_STRUCT_OFFSET (GESProjectClass,
+          proxies_creation_paused), NULL, NULL, g_cclosure_marshal_generic,
+      G_TYPE_NONE, 0);
+
   object_class->dispose = _dispose;
   object_class->dispose = _finalize;
 
@@ -451,6 +476,7 @@ ges_project_init (GESProject * project)
   priv->formatter_asset = NULL;
   priv->encoding_profiles = NULL;
   priv->proxy_profile = NULL;
+  priv->proxies_creation_started = FALSE;
   priv->proxies_created = FALSE;
   priv->proxies_location = NULL;
   priv->assets = g_hash_table_new_full (g_str_hash, g_str_equal,
@@ -572,22 +598,19 @@ pad_added_cb (GstElement * uridecodebin, GstPad * pad, GstElement * encodebin)
 static void
 bus_message_cb (GstBus * bus, GstMessage * message, GESProject * project)
 {
+  GESProjectPrivate *priv;
+
+  priv = project->priv;
+
   switch (GST_MESSAGE_TYPE (message)) {
     case GST_MESSAGE_ERROR:
-      GESProjectPrivate * priv;
-
-      priv = project->priv;
-
       gst_bus_set_flushing (bus, TRUE);
       gst_element_set_state (priv->proxy_pipeline, GST_STATE_NULL);
       gst_object_unref (priv->proxy_pipeline);
       break;
     case GST_MESSAGE_EOS:{
-      GESProjectPrivate *priv;
       gpointer key, value;
       gboolean next_proxy = FALSE;
-
-      priv = project->priv;
 
       gst_element_set_state (priv->proxy_pipeline, GST_STATE_NULL);
       gst_object_unref (priv->proxy_pipeline);
@@ -600,7 +623,7 @@ bus_message_cb (GstBus * bus, GstMessage * message, GESProject * project)
       }
 
       if (next_proxy == TRUE) {
-        transcode (project, (GESAsset *) value);
+        _transcode (project, (GESAsset *) value);
       } else {
         g_signal_emit (project, _signals[PROXIES_CREATED_SIGNAL], 0, NULL);
       }
@@ -613,7 +636,7 @@ bus_message_cb (GstBus * bus, GstMessage * message, GESProject * project)
 }
 
 static void
-transcode (GESProject * project, GESAsset * asset)
+_transcode (GESProject * project, GESAsset * asset)
 {
   GstElement *pipeline, *src, *ebin, *sink;
   GstEncodingProfile *profile;
@@ -642,8 +665,6 @@ transcode (GESProject * project, GESAsset * asset)
         g_path_get_basename (g_filename_from_uri (outuri, NULL, NULL)), NULL);
   }
 
-  g_print ("URI: %s\n OUT: %s\n", uri, outuri);
-
   pipeline = gst_pipeline_new ("encoding-pipeline");
   priv->proxy_pipeline = pipeline;
   src = gst_element_factory_make ("uridecodebin", NULL);
@@ -669,6 +690,11 @@ transcode (GESProject * project, GESAsset * asset)
     return;
   }
 
+  if (priv->proxies_creation_started == FALSE) {
+    g_signal_emit (project, _signals[PROXIES_CREATION_STARTED_SIGNAL], 0, NULL);
+  }
+  priv->proxies_creation_started = TRUE;
+
   g_free (outuri);
 }
 
@@ -684,7 +710,7 @@ _create_proxies (GESProject * project)
 
   profile = ges_project_get_proxy_profile (project, NULL);
   if (GST_IS_ENCODING_PROFILE (profile)) {
-    transcode (project, NULL);
+    _transcode (project, NULL);
     priv->proxies_created = TRUE;
     gst_object_unref (profile);
   }
@@ -1205,13 +1231,24 @@ ges_project_get_proxy_profile (GESProject * project, GESUriClipAsset * asset)
   return priv->proxy_profile;
 }
 
-static void
+static gboolean
 project_start_proxies_cancalled_cb (GCancellable * cancellable,
     GESProject * project)
 {
-  gst_element_set_state (project->priv->proxy_pipeline, GST_STATE_NULL);
-  gst_object_unref (project->priv->proxy_pipeline);
+  GESProjectPrivate *priv;
+
+  priv = project->priv;
+
+  g_print ("We are here!\n");
+  if (!GST_IS_ELEMENT (priv->proxy_pipeline)) {
+    return FALSE;
+  }
+
+  gst_element_set_state (priv->proxy_pipeline, GST_STATE_NULL);
+  gst_object_unref (priv->proxy_pipeline);
   g_cancellable_reset (cancellable);
+
+  return TRUE;
 }
 
 /**
@@ -1233,6 +1270,7 @@ ges_project_start_proxy_creation (GESProject * project, GESUriClipAsset * asset,
   priv = project->priv;
 
   if (cancellable) {
+    g_print ("We are here!\n");
     g_cancellable_connect (cancellable,
         (GCallback) project_start_proxies_cancalled_cb, project, NULL);
   }
@@ -1242,6 +1280,7 @@ ges_project_start_proxy_creation (GESProject * project, GESUriClipAsset * asset,
             GST_STATE_PLAYING) == GST_STATE_CHANGE_FAILURE) {
       return FALSE;
     }
+    return TRUE;
   }
 
   if (asset) {
@@ -1257,7 +1296,7 @@ ges_project_start_proxy_creation (GESProject * project, GESUriClipAsset * asset,
     }
 
     if (GES_IS_URI_CLIP_ASSET (asset)) {
-      transcode (project, GES_ASSET (asset));
+      _transcode (project, GES_ASSET (asset));
     }
 
     gst_object_unref (profile);
@@ -1274,7 +1313,40 @@ ges_project_start_proxy_creation (GESProject * project, GESUriClipAsset * asset,
     }
   }
 
+  if (cancellable) {
+    g_cancellable_disconnect (cancellable, 0);
+  }
+
   return TRUE;
+}
+
+/**
+ * ges_project_start_proxy_creation_async:
+ * @project: (transfer none) The #GESProject.
+ * @asset: (allow-none) The #GESUriClipAsset.
+ * @cancellable: (allow-none) optional #GCancellable object, NULL to ignore.
+ * @callback: a #GAsyncReadyCallback to call when the initialization is finished.
+ * @user_data: The user data to pass when callback is called.
+ * Method to start create proxies for proxy editing asyncronously, callback will be called when the assets is ready to be used or if an error occured. If asset is NULL, it means start creation of all proxies.
+ */
+void
+ges_project_start_proxy_creation_async (GESProject * project,
+    GESUriClipAsset * asset, GCancellable * cancellable,
+    GAsyncReadyCallback callback, gpointer user_data)
+{
+  GSimpleAsyncResult *simple;
+  GObject *object;
+
+  object = G_OBJECT (project);
+  if (asset) {
+    g_object_unref (object);
+    object = G_OBJECT (asset);
+  }
+
+  simple =
+      g_simple_async_result_new (object, callback, user_data,
+      ges_project_start_proxy_creation);
+  g_simple_async_result_complete_in_idle (simple);
 }
 
 /**
@@ -1293,7 +1365,28 @@ ges_project_pause_proxy_creation (GESProject * project)
     return FALSE;
   }
 
+  g_signal_emit (project, _signals[PROXIES_CREATION_PAUSED_SIGNAL], 0, NULL);
+
   return TRUE;
+}
+
+/**
+ * ges_project_pause_proxy_creation_async:
+ * @project: (transfer none) The #GESProject.
+ * @callback: a #GAsyncReadyCallback to call when the initialization is finished.
+ * @user_data: The user data to pass when callback is called.
+ * Method to pause create proxies for proxy editing asyncronously, callback will be called when the assets is ready to be used or if an error occured.
+ */
+void
+ges_project_pause_proxy_creation_async (GESProject * project,
+    GAsyncReadyCallback callback, gpointer user_data)
+{
+  GSimpleAsyncResult *simple;
+
+  simple =
+      g_simple_async_result_new (G_OBJECT (project), callback, user_data,
+      ges_project_pause_proxy_creation);
+  g_simple_async_result_complete_in_idle (simple);
 }
 
 /**

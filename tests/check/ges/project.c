@@ -645,6 +645,20 @@ project_proxies_created_cb (GESProject * project, GMainLoop * mainloop)
   g_main_loop_quit (mainloop);
 }
 
+static void
+project_proxies_creation_started_cb (GESProject * project, gpointer user_data)
+{
+  g_print ("Proxies creation started->paused...\n");
+  //ges_project_pause_proxy_creation (GES_PROJECT (project));
+}
+
+static void
+project_proxies_creation_paused_cb (GESProject * project, gpointer user_data)
+{
+
+  g_print ("Proxies creation paused->started again...\n");
+  //ges_project_start_proxy_creation (GES_PROJECT (project), NULL, NULL);
+}
 
 GST_START_TEST (test_project_proxy_editing)
 {
@@ -652,16 +666,22 @@ GST_START_TEST (test_project_proxy_editing)
   GstEncodingProfile *profile, *tmpprofile;
   GESProject *project;
   GESTimeline *timeline;
+  GCancellable *cancellable;
   //gchar *uri = ges_test_file_uri ("test-project.xges");
   gchar *uri = gst_filename_to_uri ("/home/dark-al/test.xges", NULL);
 
   project = ges_project_new (uri);
+  cancellable = g_cancellable_new ();
   mainloop = g_main_loop_new (NULL, FALSE);
   fail_unless (GES_IS_PROJECT (project));
 
   /* Connect the signals */
   g_signal_connect (project, "proxies_created",
       (GCallback) project_proxies_created_cb, mainloop);
+  g_signal_connect (project, "proxies_creation_started",
+      (GCallback) project_proxies_creation_started_cb, NULL);
+  g_signal_connect (project, "proxies_creation_paused",
+      (GCallback) project_proxies_creation_paused_cb, NULL);
 
   /* Make sure we update the project's dummy URL to some actual URL */
   g_signal_connect (project, "missing-uri", (GCallback) _set_new_uri, NULL);
@@ -676,7 +696,9 @@ GST_START_TEST (test_project_proxy_editing)
   tmpprofile = ges_project_get_proxy_profile (project, NULL);
   fail_unless (gst_encoding_profile_is_equal (profile, tmpprofile));
 
-  ges_project_start_proxy_creation (project, NULL, NULL);
+  //ges_project_start_proxy_creation_async (project, NULL, cancellable, NULL, NULL);
+  ges_project_start_proxy_creation (project, NULL, cancellable);
+  g_cancellable_cancel (cancellable);
 
   g_main_loop_run (mainloop);
 
@@ -685,7 +707,8 @@ GST_START_TEST (test_project_proxy_editing)
   g_free (uri);
 
   g_main_loop_unref (mainloop);
-  g_cancellable_disconnect (cancellable, mainloop);
+  g_signal_handlers_disconnect_by_func (project,
+      (GCallback) project_proxies_created_cb, mainloop);
 }
 
 GST_END_TEST;
