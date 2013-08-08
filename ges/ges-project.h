@@ -71,6 +71,7 @@ struct _GESProjectClass
   void     (*proxies_created) (GESProject * self);
   void     (*proxies_creation_started) (GESProject * self);
   void     (*proxies_creation_paused) (GESProject * self);
+  void     (*proxies_creation_cancelled) (GESProject * self);
 
   gpointer _ges_reserved[GES_PADDING];
 };

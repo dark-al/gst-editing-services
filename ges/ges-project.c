@@ -89,6 +89,7 @@ enum
   MISSING_URI_SIGNAL,
   PROXIES_CREATION_STARTED_SIGNAL,
   PROXIES_CREATION_PAUSED_SIGNAL,
+  PROXIES_CREATION_CANCELLED_SIGNAL,
   PROXIES_CREATED_SIGNAL,
   LAST_SIGNAL
 };
@@ -456,6 +457,16 @@ ges_project_class_init (GESProjectClass * klass)
       g_signal_new ("proxies-creation-paused", G_TYPE_FROM_CLASS (klass),
       G_SIGNAL_RUN_LAST, G_STRUCT_OFFSET (GESProjectClass,
           proxies_creation_paused), NULL, NULL, g_cclosure_marshal_generic,
+      G_TYPE_NONE, 0);
+
+  /**
+   * GESProject::proxies-creation-cancelled:
+   * @project: the #GESProject reporting that a proxies creation cancelled.
+   */
+  _signals[PROXIES_CREATION_CANCELLED_SIGNAL] =
+      g_signal_new ("proxies-creation-cancelled", G_TYPE_FROM_CLASS (klass),
+      G_SIGNAL_RUN_LAST, G_STRUCT_OFFSET (GESProjectClass,
+          proxies_creation_cancelled), NULL, NULL, g_cclosure_marshal_generic,
       G_TYPE_NONE, 0);
 
   object_class->dispose = _dispose;
@@ -1239,14 +1250,15 @@ project_start_proxies_cancalled_cb (GCancellable * cancellable,
 
   priv = project->priv;
 
-  g_print ("We are here!\n");
   if (!GST_IS_ELEMENT (priv->proxy_pipeline)) {
+    GST_DEBUG_OBJECT (project, "Project haven't pipeline");
     return FALSE;
   }
 
   gst_element_set_state (priv->proxy_pipeline, GST_STATE_NULL);
   gst_object_unref (priv->proxy_pipeline);
-  g_cancellable_reset (cancellable);
+
+  g_signal_emit (project, _signals[PROXIES_CREATION_CANCELLED_SIGNAL], 0, NULL);
 
   return TRUE;
 }
@@ -1270,7 +1282,6 @@ ges_project_start_proxy_creation (GESProject * project, GESUriClipAsset * asset,
   priv = project->priv;
 
   if (cancellable) {
-    g_print ("We are here!\n");
     g_cancellable_connect (cancellable,
         (GCallback) project_start_proxies_cancalled_cb, project, NULL);
   }
