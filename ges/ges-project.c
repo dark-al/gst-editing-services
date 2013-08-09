@@ -45,6 +45,7 @@
  */
 #include "ges.h"
 #include "ges-internal.h"
+#include <glib/gstdio.h>
 
 /* TODO We should rely on both extractable_type and @id to identify
  * a Asset, not only @id
@@ -70,6 +71,7 @@ struct _GESProjectPrivate
   GHashTable *proxied_assets;
   gboolean proxies_creation_started;
   gboolean proxies_created;
+  gchar *proxy_uri;
   gchar *proxies_location;
   GHashTableIter proxies_iter;
 };
@@ -278,6 +280,8 @@ _dispose (GObject * object)
     gst_object_unref (priv->proxy_pipeline);
   if (priv->proxied_assets)
     g_hash_table_unref (priv->proxied_assets);
+  if (priv->proxy_uri)
+    g_free (priv->proxy_uri);
   if (priv->proxies_location)
     g_free (priv->proxies_location);
 
@@ -489,6 +493,7 @@ ges_project_init (GESProject * project)
   priv->proxy_profile = NULL;
   priv->proxies_creation_started = FALSE;
   priv->proxies_created = FALSE;
+  priv->proxy_uri = NULL;
   priv->proxies_location = NULL;
   priv->assets = g_hash_table_new_full (g_str_hash, g_str_equal,
       g_free, gst_object_unref);
@@ -626,6 +631,18 @@ bus_message_cb (GstBus * bus, GstMessage * message, GESProject * project)
       gst_element_set_state (priv->proxy_pipeline, GST_STATE_NULL);
       gst_object_unref (priv->proxy_pipeline);
 
+      if (g_str_has_suffix ((const gchar *) priv->proxy_uri, ".part")) {
+        const gchar *oldfilename, *newfilename;
+
+        oldfilename =
+            (const gchar *) g_filename_from_uri (priv->proxy_uri, NULL, NULL);
+        newfilename = g_strsplit (oldfilename, ".part", 2)[0];
+
+        if (oldfilename && newfilename) {
+          g_rename (oldfilename, newfilename);
+        }
+      }
+
       while ((next_proxy =
               g_hash_table_iter_next (&priv->proxies_iter, &key, &value))) {
         if (GES_IS_URI_CLIP_ASSET (value)) {
@@ -669,12 +686,13 @@ _transcode (GESProject * project, GESAsset * asset)
   }
 
   uri = ges_asset_get_id (GES_ASSET (asset));
-  outuri = g_strconcat (g_strdup (uri), ".proxy", NULL);
+  outuri = g_strconcat (g_strdup (uri), ".proxy.part", NULL);
   if (priv->proxies_location) {
     outuri =
         (gchar *) g_strconcat (g_strdup (priv->proxies_location),
         g_path_get_basename (g_filename_from_uri (outuri, NULL, NULL)), NULL);
   }
+  priv->proxy_uri = outuri;
 
   pipeline = gst_pipeline_new ("encoding-pipeline");
   priv->proxy_pipeline = pipeline;
@@ -705,8 +723,6 @@ _transcode (GESProject * project, GESAsset * asset)
     g_signal_emit (project, _signals[PROXIES_CREATION_STARTED_SIGNAL], 0, NULL);
   }
   priv->proxies_creation_started = TRUE;
-
-  g_free (outuri);
 }
 
 static gboolean
