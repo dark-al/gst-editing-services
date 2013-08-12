@@ -73,6 +73,7 @@ struct _GESProjectPrivate
   gboolean proxies_created;
   gchar *proxy_uri;
   gchar *proxies_location;
+  GESAsset *proxy_asset;
   GHashTableIter proxies_iter;
 };
 
@@ -284,6 +285,8 @@ _dispose (GObject * object)
     g_free (priv->proxy_uri);
   if (priv->proxies_location)
     g_free (priv->proxies_location);
+  if (priv->proxy_asset)
+    g_free (priv->proxy_asset);
 
   for (tmp = priv->formatters; tmp; tmp = tmp->next)
     ges_project_remove_formatter (GES_PROJECT (object), tmp->data);;
@@ -495,6 +498,7 @@ ges_project_init (GESProject * project)
   priv->proxies_created = FALSE;
   priv->proxy_uri = NULL;
   priv->proxies_location = NULL;
+  priv->proxy_asset = NULL;
   priv->assets = g_hash_table_new_full (g_str_hash, g_str_equal,
       g_free, gst_object_unref);
   priv->loading_assets = g_hash_table_new_full (g_str_hash, g_str_equal,
@@ -625,6 +629,7 @@ bus_message_cb (GstBus * bus, GstMessage * message, GESProject * project)
       gst_object_unref (priv->proxy_pipeline);
       break;
     case GST_MESSAGE_EOS:{
+      GESExtractable *extracted;
       gpointer key, value;
       gboolean next_proxy = FALSE;
 
@@ -641,10 +646,18 @@ bus_message_cb (GstBus * bus, GstMessage * message, GESProject * project)
         if (oldfilename && newfilename) {
           g_rename (oldfilename, newfilename);
         }
+
+        g_free (priv->proxy_uri);
+
+        priv->proxy_uri = gst_filename_to_uri (newfilename, NULL);
+        extracted = ges_asset_extract (priv->proxy_asset, NULL);
+        ges_asset_set_proxy (priv->proxy_asset, priv->proxy_uri);
+        ges_extractable_set_asset (extracted, priv->proxy_asset);
       }
 
-      while ((next_proxy =
-              g_hash_table_iter_next (&priv->proxies_iter, &key, &value))) {
+      next_proxy = g_hash_table_iter_next (&priv->proxies_iter, &key, &value);
+      while (next_proxy) {
+        next_proxy = g_hash_table_iter_next (&priv->proxies_iter, &key, &value);
         if (GES_IS_URI_CLIP_ASSET (value)) {
           break;
         }
@@ -674,25 +687,55 @@ _transcode (GESProject * project, GESAsset * asset)
   const gchar *uri;
   gpointer key, value;
   GHashTableIter iter;
+  gboolean proxy_exists = FALSE;
 
   priv = project->priv;
   profile = priv->proxy_profile;
 
   if (asset == NULL) {
     g_hash_table_iter_init (&iter, priv->assets);
-    g_hash_table_iter_next (&iter, &key, &value);
-    priv->proxies_iter = iter;
-    asset = (GESAsset *) value;
   }
 
-  uri = ges_asset_get_id (GES_ASSET (asset));
-  outuri = g_strconcat (g_strdup (uri), ".proxy.part", NULL);
-  if (priv->proxies_location) {
-    outuri =
-        (gchar *) g_strconcat (g_strdup (priv->proxies_location),
-        g_path_get_basename (g_filename_from_uri (outuri, NULL, NULL)), NULL);
-  }
+  do {
+    if (asset == NULL) {
+      gboolean next_proxy = FALSE;
+
+      next_proxy = g_hash_table_iter_next (&iter, &key, &value);
+      if (next_proxy == FALSE) {
+        g_signal_emit (project, _signals[PROXIES_CREATED_SIGNAL], 0, NULL);
+        return;
+      }
+      priv->proxies_iter = iter;
+      asset = (GESAsset *) value;
+    }
+
+    uri = ges_asset_get_id (GES_ASSET (asset));
+    outuri = g_strconcat (g_strdup (uri), ".proxy", NULL);
+    if (priv->proxies_location) {
+      outuri =
+          (gchar *) g_strconcat (g_strdup (priv->proxies_location),
+          g_path_get_basename (g_filename_from_uri (outuri, NULL, NULL)), NULL);
+    }
+
+    proxy_exists =
+        g_file_test (g_filename_from_uri (outuri, NULL, NULL),
+        G_FILE_TEST_EXISTS);
+    if (proxy_exists) {
+      GESExtractable *extracted;
+
+      extracted = ges_asset_extract (asset, NULL);
+      ges_asset_set_proxy (asset, outuri);
+      ges_extractable_set_asset (extracted, asset);
+
+      g_object_unref (asset);
+      asset = NULL;
+    }
+
+  } while (proxy_exists);
+
+  outuri = g_strconcat (g_strdup (outuri), ".part", NULL);
   priv->proxy_uri = outuri;
+  priv->proxy_asset = asset;
 
   pipeline = gst_pipeline_new ("encoding-pipeline");
   priv->proxy_pipeline = pipeline;
@@ -1298,6 +1341,7 @@ ges_project_start_proxy_creation (GESProject * project, GESUriClipAsset * asset,
   priv = project->priv;
 
   if (cancellable) {
+    g_return_val_if_fail (G_IS_CANCELLABLE (cancellable), FALSE);
     g_cancellable_connect (cancellable,
         (GCallback) project_start_proxies_cancalled_cb, project, NULL);
   }
@@ -1370,10 +1414,13 @@ ges_project_start_proxy_creation_async (GESProject * project,
     object = G_OBJECT (asset);
   }
 
+  /* FIXME: add support GCancellable for async */
   simple =
       g_simple_async_result_new (object, callback, user_data,
       ges_project_start_proxy_creation);
   g_simple_async_result_complete_in_idle (simple);
+
+  g_object_unref (simple);
 }
 
 /**
