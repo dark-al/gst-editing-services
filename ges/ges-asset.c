@@ -113,7 +113,7 @@ struct _GESAssetPrivate
 
   /* When a asset is proxied, instanciating it will
    * return the asset it points to */
-  char *proxied_asset_id;
+  gchar *proxied_asset_id;
 
   /* The error that accured when a asset has been initialized with error */
   GError *error;
@@ -922,6 +922,22 @@ ges_asset_get_id (GESAsset * self)
   g_return_val_if_fail (GES_IS_ASSET (self), NULL);
 
   return self->priv->id;
+}
+
+/**
+ * ges_asset_get_proxied_asset_id:
+ * @self: The #GESAsset to get ID from
+ *
+ * Gets the proxied asset ID of a #GESAsset
+ *
+ * Returns: The proxied asset ID of @self
+ */
+const gchar *
+ges_asset_get_proxied_asset_id (GESAsset * self)
+{
+  g_return_val_if_fail (GES_IS_ASSET (self), NULL);
+
+  return self->priv->proxied_asset_id;
 }
 
 /**
