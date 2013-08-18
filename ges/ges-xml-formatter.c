@@ -753,13 +753,18 @@ _serialize_properties (GObject * object, const gchar * fieldname, ...)
 }
 
 static inline void
-_save_assets (GString * str, GESProject * project)
+_save_assets (GString * str, GESProject * project, gboolean save_proxies)
 {
   char *properties, *metas;
   GESAsset *asset;
   GList *assets, *tmp;
 
-  assets = ges_project_list_assets (project, GES_TYPE_EXTRACTABLE);
+  if (save_proxies == FALSE) {
+    assets = ges_project_list_assets (project, GES_TYPE_EXTRACTABLE);
+  } else {
+    assets = ges_project_list_proxies (project, GES_TYPE_EXTRACTABLE);
+  }
+
   for (tmp = assets; tmp; tmp = tmp->next) {
     asset = GES_ASSET (tmp->data);
     properties = _serialize_properties (G_OBJECT (asset), NULL);
@@ -1169,8 +1174,12 @@ _save (GESFormatter * formatter, GESTimeline * timeline, GError ** error)
   g_string_append (str, "    </encoding-profiles>\n");
 
   g_string_append (str, "    <ressources>\n");
-  _save_assets (str, project);
+  _save_assets (str, project, FALSE);
   g_string_append (str, "    </ressources>\n");
+
+  g_string_append (str, "    <proxies>\n");
+  _save_assets (str, project, TRUE);
+  g_string_append (str, "    </proxies>\n");
 
   _save_timeline (str, timeline);
   g_string_append (str, "</project>\n</ges>");

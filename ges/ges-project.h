@@ -82,6 +82,8 @@ gboolean  ges_project_remove_asset (GESProject *project,
                                     GESAsset * asset);
 GList   * ges_project_list_assets  (GESProject * project,
                                     GType filter);
+GList   * ges_project_list_proxies  (GESProject * project,
+                                    GType filter);
 gboolean  ges_project_save         (GESProject * project,
                                     GESTimeline * timeline,
                                     const gchar *uri,

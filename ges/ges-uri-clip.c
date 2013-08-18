@@ -283,6 +283,11 @@ extractable_set_asset (GESExtractable * self, GESAsset * asset)
   }
 
   if (GES_TIMELINE_ELEMENT (uriclip)->asset == NULL) {
+    g_print ("ASSET URI: %s\n", ges_asset_get_id (asset));
+    ges_uri_clip_set_uri (uriclip, (gchar *) ges_asset_get_id (asset));
+  } else {
+    g_print ("PROXY URI: %s\n", ges_asset_get_proxied_asset_id (asset));
+    g_object_unref (GES_TIMELINE_ELEMENT (uriclip)->asset);
     ges_uri_clip_set_uri (uriclip,
         (gchar *) ges_asset_get_proxied_asset_id (asset));
   }
@@ -298,6 +303,7 @@ ges_extractable_interface_init (GESExtractableInterface * iface)
   iface->get_parameters_from_id = extractable_get_parameters_from_id;
   iface->get_id = extractable_get_id;
   iface->set_asset = extractable_set_asset;
+  iface->can_update_asset = TRUE;
 }
 
 static void

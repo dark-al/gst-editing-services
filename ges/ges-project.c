@@ -68,13 +68,14 @@ struct _GESProjectPrivate
 
   GstEncodingProfile *proxy_profile;
   GstElement *proxy_pipeline;
+  GESAsset *proxy_asset;
+  GHashTable *proxies;
   GHashTable *proxied_assets;
+  GHashTableIter proxies_iter;
   gboolean proxies_creation_started;
   gboolean proxies_created;
   gchar *proxy_uri;
   gchar *proxies_location;
-  GESAsset *proxy_asset;
-  GHashTableIter proxies_iter;
 };
 
 typedef struct EmitLoadedInIdle
@@ -110,7 +111,7 @@ enum
 
 static GParamSpec *_properties[LAST_SIGNAL] = { 0 };
 
-static void _transcode (GESProject * project, GESAsset * asset);
+static gboolean _transcode (GESProject * project, GESAsset * asset);
 
 static gboolean
 _emit_loaded_in_idle (EmitLoadedInIdle * data)
@@ -279,6 +280,8 @@ _dispose (GObject * object)
     gst_object_unref (priv->proxy_profile);
   if (priv->proxy_pipeline)
     gst_object_unref (priv->proxy_pipeline);
+  if (priv->proxies)
+    g_hash_table_unref (priv->proxies);
   if (priv->proxied_assets)
     g_hash_table_unref (priv->proxied_assets);
   if (priv->proxy_uri)
@@ -505,6 +508,8 @@ ges_project_init (GESProject * project)
       g_free, gst_object_unref);
   priv->loaded_with_error = g_hash_table_new_full (g_str_hash, g_str_equal,
       g_free, NULL);
+  priv->proxies = g_hash_table_new_full (g_str_hash, g_str_equal,
+      g_free, gst_object_unref);
   priv->proxied_assets = g_hash_table_new_full (g_str_hash, g_str_equal,
       g_free, gst_object_unref);
 }
@@ -592,6 +597,36 @@ new_asset_cb (GESAsset * source, GAsyncResult * res, GESProject * project)
     gst_object_unref (asset);
 }
 
+static gboolean
+_add_proxy (GESProject * project, GESAsset * asset)
+{
+  g_return_val_if_fail (GES_IS_PROJECT (project), FALSE);
+  g_return_val_if_fail (asset != NULL, FALSE);
+
+  if (g_hash_table_lookup (project->priv->proxies, ges_asset_get_id (asset)))
+    return FALSE;
+
+  g_hash_table_insert (project->priv->proxies,
+      g_strdup (ges_asset_get_id (asset)), gst_object_ref (asset));
+
+  GST_DEBUG_OBJECT (project, "Proxy asset added: %s", ges_asset_get_id (asset));
+  //g_signal_emit (project, _signals[ASSET_ADDED_SIGNAL], 0, asset);
+
+  return TRUE;
+}
+
+static void
+new_proxy_asset_cb (GESAsset * source, GAsyncResult * res, GESProject * project)
+{
+  GESAsset *asset = ges_asset_request_finish (res, NULL);
+
+  _add_proxy (project, asset);
+
+  if (asset) {
+    gst_object_unref (asset);
+  }
+}
+
 static void
 pad_added_cb (GstElement * uridecodebin, GstPad * pad, GstElement * encodebin)
 {
@@ -629,7 +664,6 @@ bus_message_cb (GstBus * bus, GstMessage * message, GESProject * project)
       gst_object_unref (priv->proxy_pipeline);
       break;
     case GST_MESSAGE_EOS:{
-      GESExtractable *extracted;
       gpointer key, value;
       gboolean next_proxy = FALSE;
 
@@ -650,23 +684,24 @@ bus_message_cb (GstBus * bus, GstMessage * message, GESProject * project)
         g_free (priv->proxy_uri);
 
         priv->proxy_uri = gst_filename_to_uri (newfilename, NULL);
-        extracted = ges_asset_extract (priv->proxy_asset, NULL);
-        ges_asset_set_proxy (priv->proxy_asset, priv->proxy_uri);
-        ges_extractable_set_asset (extracted, priv->proxy_asset);
+        //_create_proxy_asset (project);
       }
 
       next_proxy = g_hash_table_iter_next (&priv->proxies_iter, &key, &value);
+
+#if 0
       while (next_proxy) {
         next_proxy = g_hash_table_iter_next (&priv->proxies_iter, &key, &value);
         if (GES_IS_URI_CLIP_ASSET (value)) {
           break;
         }
       }
+#endif
 
-      if (next_proxy == TRUE) {
-        _transcode (project, (GESAsset *) value);
-      } else {
+      if (next_proxy == FALSE) {
         g_signal_emit (project, _signals[PROXIES_CREATED_SIGNAL], 0, NULL);
+      } else {
+        _transcode (project, (GESAsset *) value);
       }
 
       break;
@@ -676,7 +711,65 @@ bus_message_cb (GstBus * bus, GstMessage * message, GESProject * project)
   }
 }
 
-static void
+static gchar *
+_get_outuri (GESProject * project, const gchar * uri)
+{
+  GESProjectPrivate *priv;
+  gchar *outuri;
+
+  g_return_val_if_fail (GES_IS_PROJECT (project), FALSE);
+
+  priv = project->priv;
+
+  outuri = g_strconcat (g_strdup (uri), ".proxy", NULL);
+  if (priv->proxies_location) {
+    outuri =
+        (gchar *) g_strconcat (g_strdup (priv->proxies_location),
+        g_path_get_basename (g_filename_from_uri (outuri, NULL, NULL)), NULL);
+  }
+
+  return g_strdup (outuri);
+}
+
+static gboolean
+_create_proxy_asset (GESProject * project, const gchar * id,
+    GType extractable_type)
+{
+  g_return_val_if_fail (GES_IS_PROJECT (project), FALSE);
+  g_return_val_if_fail (id != NULL, FALSE);
+  g_return_val_if_fail (g_type_is_a (extractable_type, GES_TYPE_EXTRACTABLE),
+      FALSE);
+
+  if (g_hash_table_lookup (project->priv->proxies, id)) {
+    return FALSE;
+  }
+
+  ges_asset_request_async (extractable_type, id, NULL,
+      (GAsyncReadyCallback) new_proxy_asset_cb, project);
+
+  return TRUE;
+}
+
+static gboolean
+_proxy_exists (GESProject * project, GESAsset * asset)
+{
+  gchar *outuri;
+  const gchar *uri;
+  gboolean proxy_exists = FALSE;
+
+  g_return_val_if_fail (GES_IS_PROJECT (project), FALSE);
+
+  uri = ges_asset_get_id (GES_ASSET (asset));
+  outuri = _get_outuri (project, uri);
+
+  proxy_exists =
+      g_file_test (g_filename_from_uri (outuri, NULL, NULL),
+      G_FILE_TEST_EXISTS);
+
+  return proxy_exists;
+}
+
+static gboolean
 _transcode (GESProject * project, GESAsset * asset)
 {
   GstElement *pipeline, *src, *ebin, *sink;
@@ -687,52 +780,53 @@ _transcode (GESProject * project, GESAsset * asset)
   const gchar *uri;
   gpointer key, value;
   GHashTableIter iter;
-  gboolean proxy_exists = FALSE;
+
+  g_return_val_if_fail (GES_IS_PROJECT (project), FALSE);
 
   priv = project->priv;
   profile = priv->proxy_profile;
 
   if (asset == NULL) {
     g_hash_table_iter_init (&iter, priv->assets);
-  }
+    g_hash_table_iter_next (&iter, &key, &value);
 
-  do {
-    if (asset == NULL) {
+    //while (_proxy_exists (project, (GESAsset *) value)) {
+    if (value) {
+      GType extractable_type;
       gboolean next_proxy = FALSE;
+
+      uri = ges_asset_get_id (GES_ASSET (value));
+      outuri = _get_outuri (project, uri);
+      extractable_type = ges_asset_get_extractable_type (GES_ASSET (value));
+
+      _create_proxy_asset (project, outuri, extractable_type);
 
       next_proxy = g_hash_table_iter_next (&iter, &key, &value);
       if (next_proxy == FALSE) {
         g_signal_emit (project, _signals[PROXIES_CREATED_SIGNAL], 0, NULL);
-        return;
+        return TRUE;
       }
-      priv->proxies_iter = iter;
-      asset = (GESAsset *) value;
     }
 
-    uri = ges_asset_get_id (GES_ASSET (asset));
-    outuri = g_strconcat (g_strdup (uri), ".proxy", NULL);
-    if (priv->proxies_location) {
-      outuri =
-          (gchar *) g_strconcat (g_strdup (priv->proxies_location),
-          g_path_get_basename (g_filename_from_uri (outuri, NULL, NULL)), NULL);
+    priv->proxies_iter = iter;
+    asset = GES_ASSET (value);
+  } else {
+    if (_proxy_exists (project, asset)) {
+      GType extractable_type;
+
+      uri = ges_asset_get_id (asset);
+      outuri = _get_outuri (project, uri);
+      extractable_type = ges_asset_get_extractable_type (asset);
+
+      _create_proxy_asset (project, outuri, extractable_type);
+
+      g_signal_emit (project, _signals[PROXIES_CREATED_SIGNAL], 0, NULL);
+      return TRUE;
     }
+  }
 
-    proxy_exists =
-        g_file_test (g_filename_from_uri (outuri, NULL, NULL),
-        G_FILE_TEST_EXISTS);
-    if (proxy_exists) {
-      GESExtractable *extracted;
-
-      extracted = ges_asset_extract (asset, NULL);
-      ges_asset_set_proxy (asset, outuri);
-      ges_extractable_set_asset (extracted, asset);
-
-      g_object_unref (asset);
-      asset = NULL;
-    }
-
-  } while (proxy_exists);
-
+  uri = ges_asset_get_id (GES_ASSET (asset));
+  outuri = _get_outuri (project, uri);
   outuri = g_strconcat (g_strdup (outuri), ".part", NULL);
   priv->proxy_uri = outuri;
   priv->proxy_asset = asset;
@@ -759,13 +853,15 @@ _transcode (GESProject * project, GESAsset * asset)
   if (gst_element_set_state (pipeline,
           GST_STATE_PLAYING) == GST_STATE_CHANGE_FAILURE) {
     GST_ERROR ("Could not set pipeline state to PLAYING");
-    return;
+    return FALSE;
   }
 
   if (priv->proxies_creation_started == FALSE) {
     g_signal_emit (project, _signals[PROXIES_CREATION_STARTED_SIGNAL], 0, NULL);
+    priv->proxies_creation_started = TRUE;
   }
-  priv->proxies_creation_started = TRUE;
+
+  return TRUE;
 }
 
 static gboolean
@@ -782,6 +878,7 @@ _create_proxies (GESProject * project)
   if (GST_IS_ENCODING_PROFILE (profile)) {
     _transcode (project, NULL);
     priv->proxies_created = TRUE;
+
     gst_object_unref (profile);
   }
 
@@ -978,6 +1075,39 @@ ges_project_list_assets (GESProject * project, GType filter)
 
   return ret;
 }
+
+/**
+ * ges_project_list_proxies:
+ * @project: A #GESProject
+ * @filter: Type of proxies assets to list, #GES_TYPE_EXTRACTABLE will list
+ * all proxies assets
+ *
+ * List all proxies @asset contained in @project filtering per extractable_type
+ * as defined by @filter. It copies the asset and thus will not be updated
+ * in time.
+ *
+ * Returns: (transfer full) (element-type GESAsset): The list of
+ * #GESAsset the object contains
+ */
+GList *
+ges_project_list_proxies (GESProject * project, GType filter)
+{
+  GList *ret = NULL;
+  GHashTableIter iter;
+  gpointer key, value;
+
+  g_return_val_if_fail (GES_IS_PROJECT (project), NULL);
+
+  g_hash_table_iter_init (&iter, project->priv->proxies);
+  while (g_hash_table_iter_next (&iter, &key, &value)) {
+    if (g_type_is_a (ges_asset_get_extractable_type (GES_ASSET (value)),
+            filter))
+      ret = g_list_append (ret, gst_object_ref (value));
+  }
+
+  return ret;
+}
+
 
 /**
  * ges_project_save:
