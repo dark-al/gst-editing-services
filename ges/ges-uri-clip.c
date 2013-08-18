@@ -282,6 +282,11 @@ extractable_set_asset (GESExtractable * self, GESAsset * asset)
         (GES_CLIP_ASSET (filesource_asset)));
   }
 
+  if (GES_TIMELINE_ELEMENT (uriclip)->asset == NULL) {
+    ges_uri_clip_set_uri (uriclip,
+        (gchar *) ges_asset_get_proxied_asset_id (asset));
+  }
+
   GES_TIMELINE_ELEMENT (uriclip)->asset = asset;
 }
 
