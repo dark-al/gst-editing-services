@@ -100,7 +100,8 @@ typedef enum
   ASSET_NOT_INITIALIZED,
   ASSET_INITIALIZING, ASSET_INITIALIZED_WITH_ERROR,
   ASSET_PROXIED,
-  ASSET_INITIALIZED
+  ASSET_NEEDS_RELOAD,
+  ASSET_INITIALIZED,
 } GESAssetState;
 
 static GParamSpec *_properties[PROP_LAST];
@@ -499,7 +500,10 @@ ges_asset_cache_set_loaded (GType extractable_type, const gchar * id,
       g_simple_async_result_set_from_error (G_SIMPLE_ASYNC_RESULT (tmp->data),
           error);
       g_simple_async_result_complete (G_SIMPLE_ASYNC_RESULT (tmp->data));
+      /* FIXME: ASSET_NEEDS_RELOAD don't work with that */
+#if 0
       gst_object_unref (tmp->data);
+#endif
     }
 
     g_list_free (results);
@@ -744,6 +748,11 @@ ges_asset_request (GType extractable_type, const gchar * id, GError ** error)
             goto done;
           }
           break;
+        case ASSET_NEEDS_RELOAD:
+          GST_DEBUG_OBJECT (asset, "Asset in cache and needs reload");
+          initable_init (G_INITABLE (asset), NULL, NULL);
+
+          goto done;
         case ASSET_INITIALIZED_WITH_ERROR:
           GST_WARNING_OBJECT (asset, "Initialized with error, not returning");
           if (error)
@@ -886,6 +895,12 @@ ges_asset_request_async (GType extractable_type,
             goto done;
           }
           break;
+        case ASSET_NEEDS_RELOAD:
+          GST_DEBUG_OBJECT (asset, "Asset in cache and needs reload");
+          ges_asset_cache_append_result (extractable_type, real_id, simple);
+          GES_ASSET_GET_CLASS (asset)->start_loading (asset, &error);
+
+          goto done;
         case ASSET_INITIALIZED_WITH_ERROR:
           g_simple_async_report_gerror_in_idle (G_OBJECT (asset), callback,
               user_data, error ? error : asset->priv->error);
@@ -906,6 +921,38 @@ ges_asset_request_async (GType extractable_type,
 done:
   if (real_id)
     g_free (real_id);
+}
+
+
+gboolean
+ges_asset_needs_reload (GType extractable_type, const gchar * id)
+{
+  gchar *real_id;
+  GESAsset *asset;
+  GError *error = NULL;
+
+  real_id = _check_and_update_parameters (&extractable_type, id, &error);
+  if (error) {
+    _unsure_material_for_wrong_id (id, extractable_type, error);
+    real_id = g_strdup (id);
+  }
+
+  asset = ges_asset_cache_lookup (extractable_type, real_id);
+
+  if (real_id) {
+    g_free (real_id);
+  }
+
+  if (asset) {
+    GST_DEBUG_OBJECT (asset,
+        "Asset with id %s switch state to ASSET_NEEDS_RELOAD",
+        ges_asset_get_id (asset));
+    asset->priv->state = ASSET_NEEDS_RELOAD;
+    return TRUE;
+  }
+
+  GST_DEBUG ("Asset with id %s not found in cache", id);
+  return FALSE;
 }
 
 /**
