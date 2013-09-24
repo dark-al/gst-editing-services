@@ -94,7 +94,6 @@ GESAsset * ges_asset_request         (GType extractable_type,
                                       GError **error);
 gboolean ges_asset_needs_reload      (GType extractable_type, const gchar * id);
 const gchar * ges_asset_get_id       (GESAsset* self);
-const gchar * ges_asset_get_proxied_asset_id (GESAsset* self);
 GESAsset * ges_asset_request_finish  (GAsyncResult *res,
                                       GError **error);
 GESExtractable * ges_asset_extract   (GESAsset * self,

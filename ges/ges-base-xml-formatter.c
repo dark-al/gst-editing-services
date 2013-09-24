@@ -80,6 +80,7 @@ typedef struct PendingAsset
 {
   GESFormatter *formatter;
   gchar *metadatas;
+  gchar *parent_id;
   GstStructure *properties;
 } PendingAsset;
 
@@ -573,6 +574,12 @@ new_asset_cb (GESAsset * source, GAsyncResult * res, PendingAsset * passet)
     if (passet->metadatas)
       ges_meta_container_add_metas_from_string (GES_META_CONTAINER (source),
           passet->metadatas);
+    if (passet->parent_id) {
+      GType extractable_type = ges_asset_get_extractable_type (asset);
+      GESAsset *parent =
+          ges_asset_cache_lookup (extractable_type, passet->parent_id);
+      ges_asset_set_parent (asset, parent);
+    }
     if (passet->properties)
       gst_structure_foreach (passet->properties,
           (GstStructureForeachFunc) set_property_foreach, source);
@@ -712,8 +719,8 @@ _create_profile (GESBaseXmlFormatter * self,
 
 void
 ges_base_xml_formatter_add_asset (GESBaseXmlFormatter * self,
-    const gchar * id, GType extractable_type, GstStructure * properties,
-    const gchar * metadatas, GError ** error)
+    const gchar * id, const gchar * parent_id, GType extractable_type,
+    GstStructure * properties, const gchar * metadatas, GError ** error)
 {
   PendingAsset *passet;
   GESBaseXmlFormatterPrivate *priv = _GET_PRIV (self);
@@ -724,6 +731,8 @@ ges_base_xml_formatter_add_asset (GESBaseXmlFormatter * self,
   passet = g_slice_new0 (PendingAsset);
   passet->metadatas = g_strdup (metadatas);
   passet->formatter = gst_object_ref (self);
+  if (parent_id)
+    passet->parent_id = g_strdup (parent_id);
   if (properties)
     passet->properties = gst_structure_copy (properties);
 

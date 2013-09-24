@@ -256,14 +256,14 @@ _parse_asset (GMarkupParseContext * context, const gchar * element_name,
     GESXmlFormatter * self, GError ** error)
 {
   GType extractable_type;
-  const gchar *id, *extractable_type_name, *metadatas = NULL, *properties =
-      NULL;
+  const gchar *id, *parent_id, *extractable_type_name, *metadatas =
+      NULL, *properties = NULL;
 
   if (!g_markup_collect_attributes (element_name, attribute_names,
           attribute_values, error, G_MARKUP_COLLECT_STRING, "id", &id,
-          G_MARKUP_COLLECT_STRING, "extractable-type-name",
-          &extractable_type_name,
-          COLLECT_STR_OPT, "properties", &properties,
+          G_MARKUP_COLLECT_STRING | G_MARKUP_COLLECT_OPTIONAL, "parent_id",
+          &parent_id, G_MARKUP_COLLECT_STRING, "extractable-type-name",
+          &extractable_type_name, COLLECT_STR_OPT, "properties", &properties,
           COLLECT_STR_OPT, "metadatas", &metadatas, G_MARKUP_COLLECT_INVALID))
     return;
 
@@ -284,7 +284,7 @@ _parse_asset (GMarkupParseContext * context, const gchar * element_name,
       props = gst_structure_from_string (properties, NULL);
 
     ges_base_xml_formatter_add_asset (GES_BASE_XML_FORMATTER (self), id,
-        extractable_type, props, metadatas, error);
+        parent_id, extractable_type, props, metadatas, error);
     if (props)
       gst_structure_free (props);
   }
@@ -753,18 +753,13 @@ _serialize_properties (GObject * object, const gchar * fieldname, ...)
 }
 
 static inline void
-_save_assets (GString * str, GESProject * project, gboolean save_proxies)
+_save_assets (GString * str, GESProject * project)
 {
   char *properties, *metas;
   GESAsset *asset;
   GList *assets, *tmp;
 
-  if (save_proxies == FALSE) {
-    assets = ges_project_list_assets (project, GES_TYPE_EXTRACTABLE);
-  } else {
-    assets = ges_project_list_proxies (project, GES_TYPE_EXTRACTABLE);
-  }
-
+  assets = ges_project_list_assets (project, GES_TYPE_EXTRACTABLE);
   for (tmp = assets; tmp; tmp = tmp->next) {
     asset = GES_ASSET (tmp->data);
     properties = _serialize_properties (G_OBJECT (asset), NULL);
@@ -773,6 +768,31 @@ _save_assets (GString * str, GESProject * project, gboolean save_proxies)
         g_markup_printf_escaped
         ("      <asset id='%s' extractable-type-name='%s' properties='%s' metadatas='%s' />\n",
             ges_asset_get_id (asset),
+            g_type_name (ges_asset_get_extractable_type (asset)), properties,
+            metas));
+    g_free (properties);
+    g_free (metas);
+  }
+  g_list_free_full (assets, gst_object_unref);
+}
+
+static inline void
+_save_proxies (GString * str, GESProject * project)
+{
+  char *properties, *metas;
+  GESAsset *asset;
+  GList *assets, *tmp;
+
+  assets = ges_project_list_proxies (project, GES_TYPE_EXTRACTABLE);
+  for (tmp = assets; tmp; tmp = tmp->next) {
+    asset = GES_ASSET (tmp->data);
+    properties = _serialize_properties (G_OBJECT (asset), NULL);
+    metas = ges_meta_container_metas_to_string (GES_META_CONTAINER (asset));
+    append_escaped (str,
+        g_markup_printf_escaped
+        ("        <asset id='%s' parent_id='%s' extractable-type-name='%s' properties='%s' metadatas='%s' />\n",
+            ges_asset_get_id (asset),
+            ges_asset_get_parent_id (asset),
             g_type_name (ges_asset_get_extractable_type (asset)), properties,
             metas));
     g_free (properties);
@@ -1174,12 +1194,11 @@ _save (GESFormatter * formatter, GESTimeline * timeline, GError ** error)
   g_string_append (str, "    </encoding-profiles>\n");
 
   g_string_append (str, "    <ressources>\n");
-  _save_assets (str, project, FALSE);
+  _save_assets (str, project);
+  g_string_append (str, "      <proxies>\n");
+  _save_proxies (str, project);
+  g_string_append (str, "      </proxies>\n");
   g_string_append (str, "    </ressources>\n");
-
-  g_string_append (str, "    <proxies>\n");
-  _save_assets (str, project, TRUE);
-  g_string_append (str, "    </proxies>\n");
 
   _save_timeline (str, timeline);
   g_string_append (str, "</project>\n</ges>");

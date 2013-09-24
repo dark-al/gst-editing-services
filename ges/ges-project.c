@@ -69,6 +69,7 @@ struct _GESProjectPrivate
   GstEncodingProfile *proxy_profile;
   GstElement *proxy_pipeline;
   GESAsset *proxy_asset;
+  GESAsset *proxy_parent;
   GList *create_proxies;
   GHashTable *proxies;
   GHashTable *proxied_assets;
@@ -292,6 +293,8 @@ _dispose (GObject * object)
     g_free (priv->proxies_location);
   if (priv->proxy_asset)
     g_free (priv->proxy_asset);
+  if (priv->proxy_parent)
+    g_free (priv->proxy_parent);
   if (priv->create_proxies)
     g_list_free_full (priv->create_proxies, g_free);
 
@@ -506,6 +509,7 @@ ges_project_init (GESProject * project)
   priv->proxy_uri = NULL;
   priv->proxies_location = NULL;
   priv->proxy_asset = NULL;
+  priv->proxy_parent = NULL;
   priv->create_proxies = NULL;
   priv->assets = g_hash_table_new_full (g_str_hash, g_str_equal,
       g_free, gst_object_unref);
@@ -606,7 +610,7 @@ static gboolean
 _add_proxy (GESProject * project, GESAsset * asset)
 {
   g_return_val_if_fail (GES_IS_PROJECT (project), FALSE);
-  g_return_val_if_fail (asset != NULL, FALSE);
+  g_return_val_if_fail (GES_IS_ASSET (asset), FALSE);
 
   if (g_hash_table_lookup (project->priv->proxies, ges_asset_get_id (asset)))
     return FALSE;
@@ -666,6 +670,7 @@ new_proxy_asset_cb (GESAsset * source, GAsyncResult * res, GESProject * project)
   } else {
     /* FIXME: look at the GstDiscovererInfo, and check if it matches the GstEncodingProfile you had set */
     _add_proxy (project, asset);
+    ges_asset_set_parent (asset, priv->proxy_parent);
 
     if (asset) {
       gst_object_unref (asset);
@@ -674,16 +679,14 @@ new_proxy_asset_cb (GESAsset * source, GAsyncResult * res, GESProject * project)
     cur_proxy = g_list_previous (priv->create_proxies);
     if (cur_proxy) {
       asset = cur_proxy->data;
-      if (GES_IS_URI_CLIP_ASSET (asset)) {
-        uri = ges_asset_get_id (asset);
-        outuri = _get_outuri (project, uri);
-        extractable_type = ges_asset_get_extractable_type (asset);
-
-        _create_proxy_asset (project, outuri, extractable_type);
-
-        priv->proxy_uri = (gchar *) uri;
-      }
+      uri = ges_asset_get_id (asset);
+      outuri = _get_outuri (project, uri);
+      extractable_type = ges_asset_get_extractable_type (asset);
+      priv->proxy_parent = asset;
+      priv->proxy_uri = (gchar *) uri;
       priv->create_proxies = cur_proxy;
+
+      _create_proxy_asset (project, outuri, extractable_type);
     } else {
       priv->proxies_created = TRUE;
       g_signal_emit (project, _signals[PROXIES_CREATED_SIGNAL], 0, NULL);
@@ -903,11 +906,11 @@ _create_proxies (GESProject * project)
       uri = ges_asset_get_id (asset);
       outuri = _get_outuri (project, uri);
       extractable_type = ges_asset_get_extractable_type (asset);
-
-      _create_proxy_asset (project, outuri, extractable_type);
-
+      priv->proxy_parent = asset;
       priv->proxy_uri = (gchar *) uri;
       priv->create_proxies = cur_proxy;
+
+      _create_proxy_asset (project, outuri, extractable_type);
     } else {
       priv->proxies_created = TRUE;
       g_signal_emit (project, _signals[PROXIES_CREATED_SIGNAL], 0, NULL);
@@ -1545,7 +1548,7 @@ ges_project_start_proxy_creation (GESProject * project, GESUriClipAsset * asset,
     if (priv->proxies_creation_started == FALSE) {
       _create_proxies (project);
     } else {
-      GST_DEBUG_OBJECT (project, "Proxy creation already started")
+      GST_DEBUG_OBJECT (project, "Proxy creation already started");
     }
   } else {
     GST_DEBUG_OBJECT (project,

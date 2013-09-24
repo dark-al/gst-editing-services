@@ -116,6 +116,9 @@ struct _GESAssetPrivate
    * return the asset it points to */
   gchar *proxied_asset_id;
 
+  GESAsset *parent;
+  GList *proxies;
+
   /* The error that accured when a asset has been initialized with error */
   GError *error;
 };
@@ -610,6 +613,28 @@ ges_asset_set_proxy (GESAsset * asset, const gchar * new_id)
   return TRUE;
 }
 
+const gchar *
+ges_asset_get_parent_id (GESAsset * asset)
+{
+  g_return_val_if_fail (GES_IS_ASSET (asset), NULL);
+
+  return ges_asset_get_id (asset->priv->parent);
+}
+
+gboolean
+ges_asset_set_parent (GESAsset * asset, GESAsset * parent)
+{
+  g_return_val_if_fail (GES_IS_ASSET (asset), FALSE);
+  g_return_val_if_fail (GES_IS_ASSET (parent), FALSE);
+
+  asset->priv->parent = gst_object_ref (parent);
+
+  GST_DEBUG ("Setted parent %s for asset: %s", ges_asset_get_id (parent),
+      ges_asset_get_id (asset));
+
+  return TRUE;
+}
+
 /* Caution, this method should be used in rare cases (ie: for the project
  * as we can change its ID from a useless one to a proper URI). In most
  * cases you want to update the ID creating a proxy
@@ -923,7 +948,6 @@ done:
     g_free (real_id);
 }
 
-
 gboolean
 ges_asset_needs_reload (GType extractable_type, const gchar * id)
 {
@@ -969,22 +993,6 @@ ges_asset_get_id (GESAsset * self)
   g_return_val_if_fail (GES_IS_ASSET (self), NULL);
 
   return self->priv->id;
-}
-
-/**
- * ges_asset_get_proxied_asset_id:
- * @self: The #GESAsset to get ID from
- *
- * Gets the proxied asset ID of a #GESAsset
- *
- * Returns: The proxied asset ID of @self
- */
-const gchar *
-ges_asset_get_proxied_asset_id (GESAsset * self)
-{
-  g_return_val_if_fail (GES_IS_ASSET (self), NULL);
-
-  return self->priv->proxied_asset_id;
 }
 
 /**
