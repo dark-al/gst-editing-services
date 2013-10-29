@@ -117,6 +117,7 @@ void ges_project_pause_proxy_creation_async (GESProject * project, GAsyncReadyCa
 GstState ges_project_get_proxy_state (GESProject * project);
 gboolean ges_project_set_proxies_location (GESProject * project, const gchar * uri);
 const gchar * ges_project_get_proxies_location (GESProject * project);
+gboolean ges_project_use_proxies_for_timeline (GESProject *project, GESTimeline *timeline, gboolean use_proxies);
 
 G_END_DECLS
 

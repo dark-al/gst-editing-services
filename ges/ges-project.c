@@ -71,6 +71,7 @@ struct _GESProjectPrivate
   GESAsset *proxy_asset;
   GESAsset *proxy_parent;
   GList *create_proxies;
+  GList *timeline_proxies;
   GHashTable *proxies;
   GHashTable *proxied_assets;
   gboolean proxies_creation_started;
@@ -297,6 +298,8 @@ _dispose (GObject * object)
     g_free (priv->proxy_parent);
   if (priv->create_proxies)
     g_list_free_full (priv->create_proxies, g_free);
+  if (priv->timeline_proxies)
+    g_list_free_full (priv->timeline_proxies, g_free);
 
   for (tmp = priv->formatters; tmp; tmp = tmp->next)
     ges_project_remove_formatter (GES_PROJECT (object), tmp->data);;
@@ -511,6 +514,7 @@ ges_project_init (GESProject * project)
   priv->proxy_asset = NULL;
   priv->proxy_parent = NULL;
   priv->create_proxies = NULL;
+  priv->timeline_proxies = NULL;
   priv->assets = g_hash_table_new_full (g_str_hash, g_str_equal,
       g_free, gst_object_unref);
   priv->loading_assets = g_hash_table_new_full (g_str_hash, g_str_equal,
@@ -648,11 +652,14 @@ new_proxy_asset_cb (GESAsset * source, GAsyncResult * res, GESProject * project)
 {
   GESProjectPrivate *priv;
   GError *error = NULL;
-  GESAsset *asset;
+  GESAsset *asset, *extractable_asset;
+  GESClip *clip;
+  GESLayer *layer;
+  GESTimeline *timeline;
   gchar *outuri;
   const gchar *uri;
   GType extractable_type;
-  GList *cur_proxy;
+  GList *cur_proxy, *cur_clip, *cur_layer, *cur_timeline, *clips, *layers;
 
   g_return_if_fail (GES_IS_PROJECT (project));
 
@@ -671,6 +678,33 @@ new_proxy_asset_cb (GESAsset * source, GAsyncResult * res, GESProject * project)
     /* FIXME: look at the GstDiscovererInfo, and check if it matches the GstEncodingProfile you had set */
     _add_proxy (project, asset);
     ges_asset_set_parent (asset, priv->proxy_parent);
+
+    /* Go over all proxies timeline and set proxy asset for clip */
+    if (priv->timeline_proxies) {
+      cur_timeline = g_list_first (priv->timeline_proxies);
+      for (; cur_timeline; cur_timeline = g_list_next (cur_timeline)) {
+        timeline = GES_TIMELINE (cur_timeline->data);
+        layers = ges_timeline_get_layers (timeline);
+        cur_layer = g_list_first (layers);
+        for (; cur_layer; cur_layer = g_list_next (cur_layer)) {
+          layer = GES_LAYER (cur_layer->data);
+          clips = ges_layer_get_clips (layer);
+          cur_clip = g_list_first (clips);
+          for (; cur_clip; cur_clip = g_list_next (cur_clip)) {
+            clip = GES_CLIP (cur_clip->data);
+            extractable_asset =
+                ges_extractable_get_asset (GES_EXTRACTABLE (clip));
+            if (g_strcmp0 (ges_asset_get_id (priv->proxy_parent),
+                    ges_asset_get_id (extractable_asset)) == 0) {
+              GST_DEBUG_OBJECT (clip, "Set proxy asset %s for clip",
+                  ges_asset_get_id (asset));
+              ges_extractable_set_asset (GES_EXTRACTABLE (clip), asset);
+            }
+          }
+        }
+        ges_timeline_commit (timeline);
+      }
+    }
 
     if (asset) {
       gst_object_unref (asset);
@@ -1703,4 +1737,40 @@ ges_project_get_proxies_location (GESProject * project)
   g_return_val_if_fail (GES_IS_PROJECT (project), FALSE);
 
   return (const gchar *) project->priv->proxies_location;
+}
+
+/**
+ * ges_project_get_proxies_location:
+ * @project: (transfer none) The #GESProject to set.
+ * @timeline: (transfer none) A @project timeline.
+ * Method to set proxy editing for timeline. If @use_proxies %TRUE, then set proxies for @timeline, else set @use_proxies to %FALSE.
+ */
+gboolean
+ges_project_use_proxies_for_timeline (GESProject * project,
+    GESTimeline * timeline, gboolean use_proxies)
+{
+  GESProjectPrivate *priv;
+
+  g_return_val_if_fail (GES_IS_PROJECT (project), FALSE);
+  g_return_val_if_fail (GES_IS_PROJECT (project), FALSE);
+
+  priv = project->priv;
+
+  if (use_proxies == TRUE) {
+    if (g_list_find (priv->timeline_proxies, timeline) == NULL) {
+      priv->timeline_proxies = g_list_append (priv->timeline_proxies, timeline);
+    } else {
+      /* Already in list */
+      return FALSE;
+    }
+  } else {
+    if (g_list_find (priv->timeline_proxies, timeline)) {
+      priv->timeline_proxies = g_list_remove (priv->timeline_proxies, timeline);
+    } else {
+      /* Not founded at list */
+      return FALSE;
+    }
+  }
+
+  return TRUE;
 }
